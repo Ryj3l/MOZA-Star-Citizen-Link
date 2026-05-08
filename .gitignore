@@ -1,0 +1,12 @@
+.idea
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+
+bin/
+obj/
+artifacts/
+third_party/moza-sdk/sdk-local/
+*.user
+*.suo
+*.pdb

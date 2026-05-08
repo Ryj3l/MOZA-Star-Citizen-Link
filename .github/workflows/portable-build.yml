@@ -1,0 +1,46 @@
+name: Portable Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build portable ZIP
+        shell: pwsh
+        run: ./scripts/package-portable.ps1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MozaStarCitizen-win-x64-portable
+          path: artifacts/MozaStarCitizen-win-x64-portable.zip
+
+      - name: Publish release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          gh release view $env:TAG_NAME *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:TAG_NAME --title $env:TAG_NAME --notes "Portable Windows build."
+          }
+          gh release upload $env:TAG_NAME artifacts/MozaStarCitizen-win-x64-portable.zip --clobber
