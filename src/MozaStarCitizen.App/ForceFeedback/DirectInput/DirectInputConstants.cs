@@ -24,6 +24,9 @@ internal static class DirectInputConstants
     public const int DiDegrees = 100;
     public const int DiFfNominalMax = 10000;
     public const int Infinite = unchecked((int)0xffffffff);
+    public const int DierrNotDownloaded = unchecked((int)0x80040203);
+    public const int DierrNotExclusiveAcquired = unchecked((int)0x80040205);
+    public const int DierrEffectPlaying = unchecked((int)0x80040208);
 
     public const int DijoFsX = 0;
     public const int DijoFsY = 4;

@@ -5,6 +5,7 @@ namespace MozaStarCitizen.App.Diagnostics;
 public static class AppLog
 {
     private static readonly object Sync = new();
+    private static readonly int ProcessId = System.Diagnostics.Process.GetCurrentProcess().Id;
 
     public static string LogPath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -23,7 +24,7 @@ public static class AppLog
 
             lock (Sync)
             {
-                File.AppendAllText(LogPath, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}");
+                File.AppendAllText(LogPath, $"{DateTimeOffset.Now:O} [pid:{ProcessId}] {message}{Environment.NewLine}");
             }
         }
         catch

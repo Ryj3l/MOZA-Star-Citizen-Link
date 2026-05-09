@@ -42,6 +42,16 @@ public sealed class FallbackForceFeedbackDevice : IForceFeedbackDevice
         }
     }
 
+    public async Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken)
+    {
+        if (_currentDevice is null)
+        {
+            return;
+        }
+
+        await _currentDevice.PrepareAsync(effects, cancellationToken);
+    }
+
     public Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken) =>
         TryDevicesAsync(device => device.PlayAsync(effect, cancellationToken), $"play {effect.Name}");
 
@@ -53,10 +63,9 @@ public sealed class FallbackForceFeedbackDevice : IForceFeedbackDevice
 
     private async Task TryDevicesAsync(Func<IForceFeedbackDevice, Task> action, string operation)
     {
-        var startIndex = _currentDevice is null ? 0 : Math.Max(0, _devices.ToList().IndexOf(_currentDevice));
         Exception? lastException = null;
 
-        for (var i = startIndex; i < _devices.Count; i++)
+        for (var i = 0; i < _devices.Count; i++)
         {
             var device = _devices[i];
             try

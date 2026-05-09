@@ -17,6 +17,8 @@ public sealed class NullForceFeedbackDevice : IForceFeedbackDevice
 
     public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    public Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task StopAsync(string stateKey, CancellationToken cancellationToken) => Task.CompletedTask;

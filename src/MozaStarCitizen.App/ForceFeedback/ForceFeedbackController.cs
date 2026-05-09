@@ -4,7 +4,9 @@ namespace MozaStarCitizen.App.ForceFeedback;
 
 public sealed class ForceFeedbackController
 {
+    private static readonly TimeSpan DuplicateImpactWindow = TimeSpan.FromMilliseconds(750);
     private readonly IForceFeedbackDevice _device;
+    private DateTimeOffset _lastLandingImpact = DateTimeOffset.MinValue;
 
     public ForceFeedbackController(IForceFeedbackDevice device)
     {
@@ -17,8 +19,11 @@ public sealed class ForceFeedbackController
 
     public IForceFeedbackDevice Device => _device;
 
-    public Task InitializeAsync(CancellationToken cancellationToken) =>
-        _device.InitializeAsync(cancellationToken);
+    public async Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        await _device.InitializeAsync(cancellationToken);
+        await _device.PrepareAsync(GetStandardEffects(), cancellationToken);
+    }
 
     public async Task<string> HandleAsync(ScGameEvent gameEvent, CancellationToken cancellationToken)
     {
@@ -39,6 +44,11 @@ public sealed class ForceFeedbackController
                 return "Quantum spool vibration stopped.";
 
             case ScEventKind.LandingImpact:
+                if (gameEvent.Timestamp - _lastLandingImpact < DuplicateImpactWindow)
+                {
+                    return "Landing/impact duplicate ignored.";
+                }
+
                 await _device.PlayAsync(new ForceEffect(
                     ForceEffectKind.Bump,
                     "Landing/impact bump",
@@ -46,6 +56,7 @@ public sealed class ForceFeedbackController
                     gameEvent.Duration == TimeSpan.Zero ? TimeSpan.FromMilliseconds(260) : gameEvent.Duration,
                     0,
                     null), cancellationToken);
+                _lastLandingImpact = gameEvent.Timestamp;
                 return "Landing/impact bump triggered.";
 
             case ScEventKind.AtmosphereEntered:
@@ -69,4 +80,29 @@ public sealed class ForceFeedbackController
 
     public Task StopAllAsync(CancellationToken cancellationToken) =>
         _device.StopAllAsync(cancellationToken);
+
+    private static IReadOnlyList<ForceEffect> GetStandardEffects() =>
+    [
+        new ForceEffect(
+            ForceEffectKind.PeriodicVibration,
+            "Quantum spool vibration",
+            0.42,
+            TimeSpan.FromSeconds(8),
+            34,
+            "quantum-spool"),
+        new ForceEffect(
+            ForceEffectKind.Bump,
+            "Landing/impact bump",
+            0.75,
+            TimeSpan.FromMilliseconds(260),
+            0,
+            null),
+        new ForceEffect(
+            ForceEffectKind.StateVibration,
+            "In-atmosphere vibration",
+            0.22,
+            TimeSpan.Zero,
+            18,
+            "atmosphere")
+    ];
 }

@@ -49,6 +49,8 @@ public sealed class MozaSdkForceFeedbackDevice : IForceFeedbackDevice
         return Task.CompletedTask;
     }
 
+    public Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken)
     {
         EnsureLoaded();

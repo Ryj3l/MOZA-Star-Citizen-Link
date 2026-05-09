@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text;
+using MozaStarCitizen.App.Diagnostics;
 
 namespace MozaStarCitizen.App.Log;
 
@@ -59,6 +60,9 @@ public sealed class GameLogTailer : IDisposable
     private async Task ReadLoopAsync(bool startAtEnd, CancellationToken cancellationToken)
     {
         var position = startAtEnd ? GetLengthOrZero() : 0L;
+        var lastObservedLength = -1L;
+        var lengthObservationsLogged = 0;
+        AppLog.Write($"Game.log tailer starting for '{_path}' at byte position {position}.");
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -71,11 +75,24 @@ public sealed class GameLogTailer : IDisposable
                 }
 
                 var length = new FileInfo(_path).Length;
+                if (length != lastObservedLength)
+                {
+                    if (lengthObservationsLogged < 20 || lengthObservationsLogged % 100 == 0)
+                    {
+                        AppLog.Write($"Game.log tailer observed length {length} bytes for '{_path}' at byte position {position}.");
+                    }
+
+                    lastObservedLength = length;
+                    lengthObservationsLogged++;
+                }
+
                 if (position > length)
                 {
+                    AppLog.Write($"Game.log tailer detected truncation or replacement for '{_path}'. Previous byte position {position}, new length {length}. Restarting at beginning.");
                     position = 0;
                 }
 
+                var previousPosition = position;
                 await using var stream = new FileStream(
                     _path,
                     FileMode.Open,
@@ -94,6 +111,11 @@ public sealed class GameLogTailer : IDisposable
                 }
 
                 position = stream.Position;
+                if (position > previousPosition)
+                {
+                    AppLog.Write($"Game.log tailer advanced from byte {previousPosition} to {position} for '{_path}'.");
+                }
+
                 await Task.Delay(250, cancellationToken);
             }
             catch (OperationCanceledException)

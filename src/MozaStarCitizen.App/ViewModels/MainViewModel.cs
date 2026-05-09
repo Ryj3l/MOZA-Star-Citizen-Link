@@ -10,6 +10,7 @@ using MozaStarCitizen.App.ForceFeedback;
 using MozaStarCitizen.App.Log;
 using MozaStarCitizen.App.Models;
 using MozaStarCitizen.App.Parsing;
+using MozaStarCitizen.App.ScreenCapture;
 using MozaStarCitizen.App.Settings;
 
 namespace MozaStarCitizen.App.ViewModels;
@@ -20,9 +21,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly ForceFeedbackController _feedback;
     private readonly AppSettingsStore _settingsStore = new();
     private GameLogTailer? _tailer;
+    private ScreenVisualEventMonitor? _screenMonitor;
     private string _gameLogPath = string.Empty;
     private string _status = "Ready.";
     private bool _isMonitoring;
+    private bool _isStarting;
+    private long _logLinesRead;
+    private long _logEventsMatched;
+    private long _screenEventsMatched;
 
     public MainViewModel()
     {
@@ -30,7 +36,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         AutoDetectCommand = new RelayCommand(_ => AutoDetectAsync());
         BrowseCommand = new RelayCommand(_ => BrowseAsync());
-        StartCommand = new RelayCommand(_ => StartAsync(), _ => !IsMonitoring && File.Exists(GameLogPath));
+        StartCommand = new RelayCommand(_ => StartAsync(), _ => !IsMonitoring && !_isStarting && File.Exists(GameLogPath));
         StopCommand = new RelayCommand(_ => StopAsync(), _ => IsMonitoring);
         TestQuantumCommand = new RelayCommand(_ => TestAsync(ScEventKind.QuantumSpoolStarted));
         TestImpactCommand = new RelayCommand(_ => TestAsync(ScEventKind.LandingImpact));
@@ -39,8 +45,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         OutputName = _feedback.OutputName;
         OutputStatus = _feedback.OutputStatus;
-        RefreshDiagnostics(includeExtendedDiagnostics: false);
         LoadInitialPath();
+        RefreshDiagnostics(includeExtendedDiagnostics: false);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -99,24 +105,42 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ICommand RefreshDiagnosticsCommand { get; }
 
-    private Task AutoDetectAsync()
+    public async Task AutoStartAsync()
+    {
+        if (IsMonitoring || _isStarting)
+        {
+            return;
+        }
+
+        if (!File.Exists(GameLogPath))
+        {
+            AppLog.Write("Auto-start skipped because no readable Game.log is selected.");
+            return;
+        }
+
+        AppLog.Write($"Auto-starting Game.log monitoring for '{GameLogPath}'.");
+        await StartAsync();
+    }
+
+    private async Task AutoDetectAsync()
     {
         var detected = StarCitizenLogLocator.FindGameLog();
         if (detected is null)
         {
             Status = "Game.log was not auto-detected. Use Browse once if Star Citizen is installed in a custom folder.";
-            return Task.CompletedTask;
+            return;
         }
 
         GameLogPath = detected;
         _settingsStore.Save(new AppSettings { GameLogPath = detected });
+        AppLog.Write($"Auto-detect selected Game.log: {detected}. {GetLogFileSummary(detected)}");
         Status = $"Detected Game.log: {detected}";
-        return Task.CompletedTask;
+        await AutoStartAsync();
     }
 
-    private Task BrowseAsync()
+    private async Task BrowseAsync()
     {
-        var dialog = new OpenFileDialog
+        var dialog = new Microsoft.Win32.OpenFileDialog
         {
             Title = "Select Star Citizen Game.log",
             Filter = "Star Citizen Game.log|Game.log|Log files|*.log|All files|*.*",
@@ -128,18 +152,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             GameLogPath = dialog.FileName;
             _settingsStore.Save(new AppSettings { GameLogPath = dialog.FileName });
             Status = $"Using Game.log: {dialog.FileName}";
+            AppLog.Write($"Browse selected Game.log: {dialog.FileName}. {GetLogFileSummary(dialog.FileName)}");
+            await AutoStartAsync();
         }
-
-        return Task.CompletedTask;
     }
 
     private async Task StartAsync()
     {
+        if (IsMonitoring || _isStarting)
+        {
+            Status = BuildMonitoringStatus();
+            return;
+        }
+
         if (!File.Exists(GameLogPath))
         {
             Status = "Game.log does not exist.";
             return;
         }
+
+        _isStarting = true;
+        RaiseCommandStates();
+        Status = "Starting Game.log monitoring.";
 
         try
         {
@@ -148,23 +182,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception ex)
         {
             Status = $"Force feedback output failed to initialize: {ex.Message}";
+            AppLog.Write(ex, "Force feedback output failed to initialize while starting monitoring");
             return;
+        }
+        finally
+        {
+            _isStarting = false;
+            RaiseCommandStates();
         }
 
         _tailer = new GameLogTailer(GameLogPath);
         _tailer.LineRead += OnLineRead;
-        _tailer.Faulted += (_, message) => Dispatch(() => Status = $"Log read warning: {message}");
+        _tailer.Faulted += (_, message) =>
+        {
+            AppLog.Write($"Game.log read warning for '{GameLogPath}': {message}");
+            Dispatch(() => Status = $"Log read warning: {message}");
+        };
+        _logLinesRead = 0;
+        _logEventsMatched = 0;
+        _screenEventsMatched = 0;
+        AppLog.Write($"Starting Game.log monitoring at end of '{GameLogPath}'. Patterns loaded: {_parser.PatternCount}. {GetLogFileSummary(GameLogPath)}");
         _tailer.Start(startAtEnd: true);
+        StartScreenMonitorIfEnabled();
 
         IsMonitoring = true;
         AddEvent("Monitoring started. New Star Citizen log lines will be parsed from this point forward.");
-        Status = "Monitoring Game.log.";
+        Status = BuildMonitoringStatus();
     }
 
     private async Task StopAsync()
     {
         try
         {
+            var wasMonitoring = IsMonitoring || _tailer is not null;
+
             if (_tailer is not null)
             {
                 _tailer.LineRead -= OnLineRead;
@@ -173,10 +224,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _tailer = null;
             }
 
+            if (_screenMonitor is not null)
+            {
+                _screenMonitor.EventDetected -= OnScreenEventDetected;
+                _screenMonitor.Faulted -= OnScreenCaptureFaulted;
+                await _screenMonitor.StopAsync();
+                _screenMonitor.Dispose();
+                _screenMonitor = null;
+            }
+
             await _feedback.StopAllAsync(CancellationToken.None);
+            if (!wasMonitoring)
+            {
+                IsMonitoring = false;
+                Status = "Monitoring is not running.";
+                AppLog.Write("Stop requested while Game.log monitoring was not active; stopped all active effects.");
+                return;
+            }
+
             IsMonitoring = false;
             Status = "Monitoring stopped.";
-            AddEvent("Monitoring stopped; all sustained effects were stopped.");
+            AddEvent($"Monitoring stopped; read {_logLinesRead} line(s), matched {_logEventsMatched} event(s), and stopped all sustained effects.");
+            AppLog.Write($"Stopped Game.log monitoring. Lines read: {_logLinesRead}. Events matched: {_logEventsMatched}. {GetLogFileSummary(GameLogPath)}");
         }
         catch (Exception ex)
         {
@@ -189,24 +258,45 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async void OnLineRead(object? sender, string line)
     {
-        var gameEvent = _parser.Parse(line);
-        if (gameEvent is null)
-        {
-            return;
-        }
-
         try
         {
-            var result = await _feedback.HandleAsync(gameEvent, CancellationToken.None);
-            Dispatch(() =>
+            var linesRead = Interlocked.Increment(ref _logLinesRead);
+            if (linesRead <= 5 || linesRead % 250 == 0)
             {
-                AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: {result}");
-                Status = result;
-            });
+                var matched = Interlocked.Read(ref _logEventsMatched);
+                AppLog.Write($"Game.log tailer read {linesRead} line(s); matched {matched} event(s).");
+                Dispatch(() => Status = BuildMonitoringStatus());
+            }
+
+            var gameEvent = _parser.Parse(line);
+            if (gameEvent is null)
+            {
+                return;
+            }
+
+            var matches = Interlocked.Increment(ref _logEventsMatched);
+            AppLog.Write($"Matched Game.log event #{matches}: {gameEvent.Kind} '{gameEvent.Name}' from {TrimLogLine(line)}");
+            await HandleGameEventAsync(gameEvent);
         }
         catch (Exception ex)
         {
-            Dispatch(() => Status = $"Force feedback output failed: {ex.Message}");
+            AppLog.Write(ex, "Game.log line handling failed");
+            Dispatch(() => Status = $"Game.log event handling failed: {ex.Message}");
+        }
+    }
+
+    private async void OnScreenEventDetected(object? sender, ScGameEvent gameEvent)
+    {
+        try
+        {
+            var matches = Interlocked.Increment(ref _screenEventsMatched);
+            AppLog.Write($"Matched screen-capture event #{matches}: {gameEvent.Kind} '{gameEvent.Name}' from {TrimLogLine(gameEvent.SourceLine)}");
+            await HandleGameEventAsync(gameEvent);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, "Screen-capture event handling failed");
+            Dispatch(() => Status = $"Screen-capture event handling failed: {ex.Message}");
         }
     }
 
@@ -256,7 +346,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         Status = "Refreshing diagnostics.";
         Diagnostics.Clear();
-        Diagnostics.Add($"Log file: {AppLog.LogPath}");
+        AddLogDiagnostics();
         Diagnostics.Add("Running extended diagnostics...");
 
         var diagnosticTask = Task.Run(() =>
@@ -267,7 +357,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (completedTask != diagnosticTask)
         {
             Diagnostics.Clear();
-            Diagnostics.Add($"Log file: {AppLog.LogPath}");
+            AddLogDiagnostics();
             foreach (var line in ForceFeedbackDiagnostics.GetLines(_feedback.Device, includeExtendedDiagnostics: false))
             {
                 Diagnostics.Add(line);
@@ -279,7 +369,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         Diagnostics.Clear();
-        Diagnostics.Add($"Log file: {AppLog.LogPath}");
+        AddLogDiagnostics();
         foreach (var line in await diagnosticTask)
         {
             Diagnostics.Add(line);
@@ -291,29 +381,80 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void RefreshDiagnostics(bool includeExtendedDiagnostics)
     {
         Diagnostics.Clear();
-        Diagnostics.Add($"Log file: {AppLog.LogPath}");
+        AddLogDiagnostics();
         foreach (var line in ForceFeedbackDiagnostics.GetLines(_feedback.Device, includeExtendedDiagnostics))
         {
             Diagnostics.Add(line);
         }
     }
 
+    private void AddLogDiagnostics()
+    {
+        Diagnostics.Add($"App log file: {AppLog.LogPath}");
+        Diagnostics.Add($"Selected Game.log: {(string.IsNullOrWhiteSpace(GameLogPath) ? "(none)" : GameLogPath)}");
+        if (!string.IsNullOrWhiteSpace(GameLogPath) && File.Exists(GameLogPath))
+        {
+            Diagnostics.Add($"Selected Game.log summary: {GetLogFileSummary(GameLogPath)}");
+        }
+
+        Diagnostics.Add($"Event patterns loaded: {_parser.PatternCount}");
+        Diagnostics.Add($"Monitoring read/matched: {_logLinesRead}/{_logEventsMatched}");
+        Diagnostics.Add($"Screen capture: {GetScreenCaptureSummary()}");
+    }
+
+    private string GetScreenCaptureSummary()
+    {
+        if (!ScreenVisualEventMonitor.IsEnabledByEnvironment())
+        {
+            return "disabled; set MOZA_SC_SCREEN=1 or use Run-Screen.cmd to test visual impact detection";
+        }
+
+        if (_screenMonitor is null)
+        {
+            return "enabled but not running";
+        }
+
+        return $"{_screenMonitor.Status}; frames analyzed: {_screenMonitor.FramesAnalyzed}; events matched: {_screenMonitor.EventsDetected}";
+    }
+
     private void LoadInitialPath()
     {
         var settings = _settingsStore.Load();
+        var detected = StarCitizenLogLocator.FindGameLog();
         if (!string.IsNullOrWhiteSpace(settings.GameLogPath) && File.Exists(settings.GameLogPath))
         {
+            if (!string.IsNullOrWhiteSpace(detected) &&
+                !PathsEqual(settings.GameLogPath, detected) &&
+                IsNewerLog(detected, settings.GameLogPath))
+            {
+                GameLogPath = detected;
+                _settingsStore.Save(new AppSettings { GameLogPath = detected });
+                AppLog.Write($"Replaced saved Game.log with newer auto-detected log: {detected}. Previous saved log: {settings.GameLogPath}.");
+                Status = $"Detected newer Game.log: {detected}";
+                return;
+            }
+
             GameLogPath = settings.GameLogPath;
+            AppLog.Write($"Using saved Game.log: {settings.GameLogPath}. {GetLogFileSummary(settings.GameLogPath)}");
             Status = $"Using saved Game.log: {settings.GameLogPath}";
             return;
         }
 
-        _ = AutoDetectAsync();
+        if (!string.IsNullOrWhiteSpace(detected))
+        {
+            GameLogPath = detected;
+            _settingsStore.Save(new AppSettings { GameLogPath = detected });
+            AppLog.Write($"Initial auto-detect selected Game.log: {detected}. {GetLogFileSummary(detected)}");
+            Status = $"Detected Game.log: {detected}";
+            return;
+        }
+
+        Status = "Game.log was not auto-detected. Use Browse once if Star Citizen is installed in a custom folder.";
     }
 
     private void Dispatch(Action action)
     {
-        var dispatcher = Application.Current?.Dispatcher;
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null || dispatcher.CheckAccess())
         {
             action();
@@ -321,6 +462,108 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         else
         {
             dispatcher.Invoke(action);
+        }
+    }
+
+    private static Task DispatchAsync(Func<Task> action)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            return action();
+        }
+
+        return dispatcher.InvokeAsync(action).Task.Unwrap();
+    }
+
+    private async Task HandleGameEventAsync(ScGameEvent gameEvent)
+    {
+        await DispatchAsync(async () =>
+        {
+            try
+            {
+                var result = await _feedback.HandleAsync(gameEvent, CancellationToken.None);
+                AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: {result}");
+                Status = $"{result} ({BuildMonitoringStatus()})";
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write(ex, $"Force feedback output failed for event {gameEvent.Kind}");
+                Status = $"Force feedback output failed: {ex.Message}";
+                AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: failed - {ex.Message}");
+            }
+        });
+    }
+
+    private void StartScreenMonitorIfEnabled()
+    {
+        if (!ScreenVisualEventMonitor.IsEnabledByEnvironment())
+        {
+            AppLog.Write("Screen capture monitor disabled. Set MOZA_SC_SCREEN=1 to enable experimental visual impact detection.");
+            return;
+        }
+
+        _screenMonitor = new ScreenVisualEventMonitor();
+        _screenMonitor.EventDetected += OnScreenEventDetected;
+        _screenMonitor.Faulted += OnScreenCaptureFaulted;
+        _screenMonitor.Start();
+        AddEvent("Experimental screen-capture impact detection enabled.");
+    }
+
+    private void OnScreenCaptureFaulted(object? sender, string message)
+    {
+        AppLog.Write(message);
+        Dispatch(() => Status = message);
+    }
+
+    private string BuildMonitoringStatus() =>
+        $"Monitoring Game.log. Lines read: {_logLinesRead}; log events matched: {_logEventsMatched}; screen events matched: {_screenEventsMatched}.";
+
+    private static string GetLogFileSummary(string path)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            return $"Length: {fileInfo.Length} bytes. Last write: {fileInfo.LastWriteTime:O}.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return $"File summary unavailable: {ex.Message}";
+        }
+    }
+
+    private static string TrimLogLine(string line)
+    {
+        const int maxLength = 260;
+        var trimmed = line.Trim();
+        return trimmed.Length <= maxLength
+            ? trimmed
+            : string.Concat(trimmed.AsSpan(0, maxLength), "...");
+    }
+
+    private static bool PathsEqual(string first, string second)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    private static bool IsNewerLog(string candidatePath, string currentPath)
+    {
+        try
+        {
+            var candidate = new FileInfo(candidatePath);
+            var current = new FileInfo(currentPath);
+            return candidate.LastWriteTimeUtc > current.LastWriteTimeUtc.AddSeconds(5);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 

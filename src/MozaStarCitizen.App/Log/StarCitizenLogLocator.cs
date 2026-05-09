@@ -1,4 +1,5 @@
 using System.IO;
+using MozaStarCitizen.App.Diagnostics;
 
 namespace MozaStarCitizen.App.Log;
 
@@ -9,20 +10,32 @@ public static class StarCitizenLogLocator
     public static string? FindGameLog()
     {
         var explicitPath = Environment.GetEnvironmentVariable("STAR_CITIZEN_GAME_LOG");
-        if (IsReadableLog(explicitPath))
+        if (TryGetReadableLog(explicitPath, out var explicitLog))
         {
-            return explicitPath;
+            AppLog.Write($"Using STAR_CITIZEN_GAME_LOG: {Describe(explicitLog)}");
+            return explicitLog.Path;
         }
 
+        var candidates = new List<CandidateGameLog>();
         foreach (var candidate in BuildCandidates().Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (IsReadableLog(candidate))
+            if (TryGetReadableLog(candidate, out var log))
             {
-                return candidate;
+                candidates.Add(log);
             }
         }
 
-        return null;
+        var latest = candidates
+            .OrderByDescending(candidate => candidate.LastWriteTimeUtc)
+            .FirstOrDefault();
+
+        if (latest is null)
+        {
+            return null;
+        }
+
+        AppLog.Write($"Auto-detected latest readable Game.log: {Describe(latest)}");
+        return latest.Path;
     }
 
     private static IEnumerable<string> BuildCandidates()
@@ -57,8 +70,9 @@ public static class StarCitizenLogLocator
         }
     }
 
-    private static bool IsReadableLog(string? path)
+    private static bool TryGetReadableLog(string? path, out CandidateGameLog log)
     {
+        log = CandidateGameLog.Empty;
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {
             return false;
@@ -66,7 +80,10 @@ public static class StarCitizenLogLocator
 
         try
         {
+            var fullPath = Path.GetFullPath(path);
+            var fileInfo = new FileInfo(fullPath);
             using var _ = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            log = new CandidateGameLog(fullPath, fileInfo.LastWriteTimeUtc, fileInfo.Length);
             return true;
         }
         catch (IOException)
@@ -77,5 +94,13 @@ public static class StarCitizenLogLocator
         {
             return false;
         }
+    }
+
+    private static string Describe(CandidateGameLog log) =>
+        $"{log.Path}. Length: {log.Length} bytes. Last write UTC: {log.LastWriteTimeUtc:O}";
+
+    private sealed record CandidateGameLog(string Path, DateTime LastWriteTimeUtc, long Length)
+    {
+        public static CandidateGameLog Empty { get; } = new(string.Empty, DateTime.MinValue, 0);
     }
 }

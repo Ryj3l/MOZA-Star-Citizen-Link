@@ -12,6 +12,7 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
     private readonly Guid _instanceGuid;
     private readonly string _productName;
     private readonly Dictionary<string, IDirectInputEffect> _activeEffects = [];
+    private readonly Dictionary<string, IDirectInputEffect> _effectCache = [];
     private readonly object _sync = new();
     private IDirectInput8W? _directInput;
     private IDirectInputDevice8W? _device;
@@ -80,6 +81,20 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         return Task.CompletedTask;
     }
 
+    public Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+
+        foreach (var effect in effects)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _ = GetOrCreateEffect(effect);
+        }
+
+        AppLog.Write($"DirectInput prepared {_effectCache.Count} cached effect(s) for '{_productName}'.");
+        return Task.CompletedTask;
+    }
+
     public Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken)
     {
         EnsureInitialized();
@@ -87,15 +102,10 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         var key = effect.StateKey ?? $"transient-{Guid.NewGuid():N}";
         StopEffect(key);
 
-        var directInputEffect = effect.Kind switch
-        {
-            ForceEffectKind.Bump => CreateConstantEffect(effect),
-            ForceEffectKind.PeriodicVibration or ForceEffectKind.StateVibration => CreatePeriodicEffect(effect),
-            _ => CreatePeriodicEffect(effect)
-        };
+        var directInputEffect = GetOrCreateEffect(effect);
 
         AppLog.Write($"DirectInput starting effect '{effect.Name}' on '{_productName}' intensity={effect.Intensity:0.###} durationMs={effect.Duration.TotalMilliseconds:0} frequencyHz={effect.FrequencyHz:0.###}.");
-        DirectInputNative.ThrowIfFailed(directInputEffect.Start(1, 0), $"DirectInput could not start '{effect.Name}'");
+        StartEffect(directInputEffect, effect.Name);
 
         lock (_sync)
         {
@@ -108,6 +118,54 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         }
 
         return Task.CompletedTask;
+    }
+
+    private IDirectInputEffect GetOrCreateEffect(ForceEffect effect)
+    {
+        var cacheKey = GetCacheKey(effect);
+        lock (_sync)
+        {
+            if (_effectCache.TryGetValue(cacheKey, out var cachedEffect))
+            {
+                return cachedEffect;
+            }
+        }
+
+        var createdEffect = effect.Kind switch
+        {
+            ForceEffectKind.Bump => CreateBumpEffect(effect),
+            ForceEffectKind.PeriodicVibration or ForceEffectKind.StateVibration => CreatePeriodicEffect(effect),
+            _ => CreatePeriodicEffect(effect)
+        };
+
+        lock (_sync)
+        {
+            if (_effectCache.TryGetValue(cacheKey, out var cachedEffect))
+            {
+                ReleaseEffect(createdEffect);
+                return cachedEffect;
+            }
+
+            _effectCache[cacheKey] = createdEffect;
+        }
+
+        return createdEffect;
+    }
+
+    private IDirectInputEffect CreateBumpEffect(ForceEffect effect)
+    {
+        try
+        {
+            return CreateConstantEffect(effect);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(ex, $"DirectInput constant-force bump creation failed for '{effect.Name}'. Falling back to a short sine pulse.");
+            return CreatePeriodicEffect(effect with
+            {
+                FrequencyHz = effect.FrequencyHz <= 0 ? 42 : effect.FrequencyHz
+            });
+        }
     }
 
     public Task StopAsync(string stateKey, CancellationToken cancellationToken)
@@ -210,9 +268,16 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
                 StartDelay = 0
             };
 
-            DirectInputNative.ThrowIfFailed(
-                _device!.CreateEffect(ref effectGuid, ref directInputEffect, out var createdEffect, IntPtr.Zero),
-                $"DirectInput could not create '{effect.Name}'");
+            var result = _device!.CreateEffect(ref effectGuid, ref directInputEffect, out var createdEffect, IntPtr.Zero);
+            if (result == DirectInputConstants.DierrNotExclusiveAcquired)
+            {
+                AppLog.Write($"DirectInput lost exclusive acquisition for '{_productName}' while creating '{effect.Name}'. Re-acquiring and retrying once.");
+                Reacquire();
+                result = _device.CreateEffect(ref effectGuid, ref directInputEffect, out createdEffect, IntPtr.Zero);
+            }
+
+            DirectInputNative.ThrowIfFailed(result, $"DirectInput could not create '{effect.Name}'");
+            DownloadEffect(createdEffect, effect.Name);
             return createdEffect;
         }
         finally
@@ -247,8 +312,6 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         }
 
         _ = effect.Stop();
-        _ = effect.Unload();
-        _ = Marshal.FinalReleaseComObject(effect);
     }
 
     private void EnsureInitialized()
@@ -257,6 +320,60 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         {
             throw new InvalidOperationException("DirectInput force feedback has not been initialized.");
         }
+    }
+
+    private void Reacquire()
+    {
+        EnsureInitialized();
+
+        _ = _device!.Unacquire();
+        var acquireResult = _device.Acquire();
+        if (!DirectInputNative.Succeeded(acquireResult))
+        {
+            AppLog.Write($"DirectInput re-acquire returned 0x{acquireResult:X8} for '{_productName}'.");
+        }
+
+        _ = _device.SendForceFeedbackCommand(DirectInputConstants.DisffcSetActuatorsOn);
+    }
+
+    private void StartEffect(IDirectInputEffect effect, string effectName)
+    {
+        DownloadEffect(effect, effectName);
+
+        var startResult = effect.Start(1, 0);
+        if (startResult == DirectInputConstants.DierrNotDownloaded)
+        {
+            AppLog.Write($"DirectInput effect '{effectName}' was not downloaded. Downloading and retrying start once.");
+            DownloadEffect(effect, effectName);
+            startResult = effect.Start(1, 0);
+        }
+        else if (startResult == DirectInputConstants.DierrNotExclusiveAcquired)
+        {
+            AppLog.Write($"DirectInput lost exclusive acquisition for '{_productName}' while starting '{effectName}'. Re-acquiring and retrying once.");
+            Reacquire();
+            DownloadEffect(effect, effectName);
+            startResult = effect.Start(1, 0);
+        }
+        else if (startResult == DirectInputConstants.DierrEffectPlaying)
+        {
+            _ = effect.Stop();
+            startResult = effect.Start(1, 0);
+        }
+
+        DirectInputNative.ThrowIfFailed(startResult, $"DirectInput could not start '{effectName}'");
+    }
+
+    private void DownloadEffect(IDirectInputEffect effect, string effectName)
+    {
+        var result = effect.Download();
+        if (result == DirectInputConstants.DierrNotExclusiveAcquired)
+        {
+            AppLog.Write($"DirectInput lost exclusive acquisition for '{_productName}' while downloading '{effectName}'. Re-acquiring and retrying once.");
+            Reacquire();
+            result = effect.Download();
+        }
+
+        DirectInputNative.ThrowIfFailed(result, $"DirectInput could not download '{effectName}'");
     }
 
     private static int IsPreferredDevice(DirectInputDeviceInfo deviceInfo)
@@ -303,6 +420,23 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         return (int)Math.Clamp(duration.TotalMilliseconds * 1000, 1, int.MaxValue);
     }
 
+    private static string GetCacheKey(ForceEffect effect) =>
+        string.Join(
+            '|',
+            effect.Kind,
+            effect.Name,
+            Math.Round(Math.Clamp(effect.Intensity, 0, 1), 3),
+            (int)Math.Clamp(effect.Duration.TotalMilliseconds, 0, int.MaxValue),
+            Math.Round(effect.FrequencyHz, 3),
+            effect.StateKey ?? string.Empty);
+
+    private static void ReleaseEffect(IDirectInputEffect effect)
+    {
+        _ = effect.Stop();
+        _ = effect.Unload();
+        _ = Marshal.FinalReleaseComObject(effect);
+    }
+
     private static void FreeIfAllocated(IntPtr pointer)
     {
         if (pointer != IntPtr.Zero)
@@ -313,7 +447,7 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
 
     private static IntPtr GetMainWindowHandle()
     {
-        var window = Application.Current?.MainWindow;
+        var window = System.Windows.Application.Current?.MainWindow;
         return window is null ? IntPtr.Zero : new WindowInteropHelper(window).Handle;
     }
 }

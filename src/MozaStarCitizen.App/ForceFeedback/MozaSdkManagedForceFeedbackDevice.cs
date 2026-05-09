@@ -102,6 +102,8 @@ public sealed class MozaSdkManagedForceFeedbackDevice : IForceFeedbackDevice
         return Task.CompletedTask;
     }
 
+    public Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken) => Task.CompletedTask;
+
     public Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken)
     {
         EnsureInitialized();
@@ -333,7 +335,7 @@ public sealed class MozaSdkManagedForceFeedbackDevice : IForceFeedbackDevice
 
     private static IntPtr GetMainWindowHandle()
     {
-        var window = Application.Current?.MainWindow;
+        var window = System.Windows.Application.Current?.MainWindow;
         return window is null ? IntPtr.Zero : new WindowInteropHelper(window).Handle;
     }
 

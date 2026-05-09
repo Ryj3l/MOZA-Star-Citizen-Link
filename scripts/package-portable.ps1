@@ -52,12 +52,18 @@ if (Test-Path $MozaSdkPath) {
 function Write-Launcher {
     param(
         [string]$Name,
-        [string]$Mode
+        [string]$Mode,
+        [string[]]$ExtraEnvironment = @()
     )
 
     $lines = @(
         "@echo off",
-        "set MOZA_SC_OUTPUT=$Mode",
+        "set MOZA_SC_OUTPUT=$Mode"
+    )
+    foreach ($entry in $ExtraEnvironment) {
+        $lines += "set $entry"
+    }
+    $lines += @(
         "start """" ""%~dp0MozaStarCitizen.exe"""
     )
     Set-Content -Path (Join-Path $publishDir $Name) -Value $lines -Encoding ASCII
@@ -67,6 +73,7 @@ Write-Launcher "Run-Auto.cmd" ""
 Write-Launcher "Run-DirectInput.cmd" "DirectInput"
 Write-Launcher "Run-MozaSdk.cmd" "MozaSdk"
 Write-Launcher "Run-Preview.cmd" "Preview"
+Write-Launcher "Run-Screen.cmd" "DirectInput" @("MOZA_SC_SCREEN=1")
 
 if (Test-Path $zipPath) {
     Remove-Item $zipPath -Force
