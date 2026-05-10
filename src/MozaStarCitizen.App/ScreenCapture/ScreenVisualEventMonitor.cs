@@ -24,10 +24,10 @@ public sealed class ScreenVisualEventMonitor : IDisposable
     private const double DefaultMaxAverageDiffThreshold = 70;
     private const double DefaultMaxHighDiffRatioThreshold = 0.58;
     private const int DefaultRequiredStableFrames = 6;
-    private const double DefaultAltimeterEnterScore = 40;
-    private const double DefaultAltimeterExitScore = 24;
+    private const double DefaultAltimeterEnterScore = 70;
+    private const double DefaultAltimeterExitScore = 20;
     private const int DefaultAltimeterEnterFrames = 4;
-    private const int DefaultAltimeterExitFrames = 40;
+    private const int DefaultAltimeterExitFrames = 32;
     private readonly double _averageDiffThreshold = ReadDouble("MOZA_SC_SCREEN_IMPACT_DIFF", DefaultAverageDiffThreshold);
     private readonly double _highDiffRatioThreshold = ReadDouble("MOZA_SC_SCREEN_IMPACT_RATIO", DefaultHighDiffRatioThreshold);
     private readonly double _redDominanceThreshold = ReadDouble("MOZA_SC_SCREEN_RED_RATIO", DefaultRedDominanceThreshold);
@@ -131,6 +131,7 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 {
                     SetStatus(status);
                     _previousFrame = null;
+                    SuppressAtmosphere("screen capture unavailable", status, immediate: true);
                     await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
                     continue;
                 }
@@ -159,6 +160,12 @@ public sealed class ScreenVisualEventMonitor : IDisposable
     private void AnalyzeFrame(ScreenFrame frame)
     {
         AnalyzeAltimeter(frame);
+        if (frame.CursorVisible)
+        {
+            _previousFrame = null;
+            _stableFrames = 0;
+            return;
+        }
 
         var previous = _previousFrame;
         _previousFrame = frame;
@@ -248,10 +255,15 @@ public sealed class ScreenVisualEventMonitor : IDisposable
 
     private void AnalyzeAltimeter(ScreenFrame frame)
     {
-        var score = frame.AltimeterScore;
+        var score = frame.CursorVisible ? 0 : frame.AltimeterScore;
         var now = DateTimeOffset.Now;
 
-        if (score >= _altimeterEnterScore)
+        if (frame.CursorVisible)
+        {
+            _altimeterPresentFrames = 0;
+            _altimeterAbsentFrames = _altimeterExitFrames;
+        }
+        else if (score >= _altimeterEnterScore)
         {
             _altimeterPresentFrames = Math.Min(_altimeterEnterFrames, _altimeterPresentFrames + 1);
             _altimeterAbsentFrames = 0;
@@ -265,7 +277,7 @@ public sealed class ScreenVisualEventMonitor : IDisposable
         if (now - _lastAltimeterLog >= TimeSpan.FromSeconds(5))
         {
             _lastAltimeterLog = now;
-            AppLog.Write($"Screen capture altimeter score={score:0.###}; presentFrames={_altimeterPresentFrames}; absentFrames={_altimeterAbsentFrames}; atmosphereActive={_atmosphereActive}; source={frame.Source}.");
+            AppLog.Write($"Screen capture altimeter score={score:0.###}; rawScore={frame.AltimeterScore:0.###}; presentFrames={_altimeterPresentFrames}; absentFrames={_altimeterAbsentFrames}; atmosphereActive={_atmosphereActive}; cursorVisible={frame.CursorVisible}; detail={frame.AltimeterDetail}; source={frame.Source}.");
         }
 
         if (!_atmosphereActive && _altimeterPresentFrames >= _altimeterEnterFrames)
@@ -279,13 +291,13 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                     "Screen altimeter detected",
                     0.28,
                     TimeSpan.Zero,
-                    $"screen-capture altimeter score={score:0.###} source={frame.Source}",
+                    $"screen-capture altimeter score={score:0.###} detail={frame.AltimeterDetail} source={frame.Source}",
                     now));
         }
         else if (_atmosphereActive && _altimeterAbsentFrames >= _altimeterExitFrames)
         {
             _atmosphereActive = false;
-            AppLog.Write($"Screen capture lost altimeter; stopping atmosphere rumble. score={score:0.###}; source={frame.Source}");
+            AppLog.Write($"Screen capture lost altimeter; stopping atmosphere rumble. score={score:0.###}; detail={frame.AltimeterDetail}; source={frame.Source}");
             EventDetected?.Invoke(
                 this,
                 new ScGameEvent(
@@ -293,9 +305,35 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                     "Screen altimeter lost",
                     0,
                     TimeSpan.Zero,
-                    $"screen-capture altimeter score={score:0.###} source={frame.Source}",
+                    $"screen-capture altimeter score={score:0.###} detail={frame.AltimeterDetail} source={frame.Source}",
                     now));
         }
+    }
+
+    private void SuppressAtmosphere(string title, string source, bool immediate)
+    {
+        _altimeterPresentFrames = 0;
+        _altimeterAbsentFrames = immediate
+            ? _altimeterExitFrames
+            : Math.Min(_altimeterExitFrames, _altimeterAbsentFrames + 1);
+
+        if (!_atmosphereActive || _altimeterAbsentFrames < _altimeterExitFrames)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.Now;
+        _atmosphereActive = false;
+        AppLog.Write($"Screen capture stopped atmosphere rumble: {title}; source={source}");
+        EventDetected?.Invoke(
+            this,
+            new ScGameEvent(
+                ScEventKind.AtmosphereExited,
+                "Screen altimeter unavailable",
+                0,
+                TimeSpan.Zero,
+                $"screen-capture altimeter unavailable reason={title} source={source}",
+                now));
     }
 
     private void LogRejectedCandidate(string reason, double averageDiff, double highDiffRatio, double redDominanceRatio)
@@ -350,7 +388,15 @@ public sealed class ScreenVisualEventMonitor : IDisposable
         _ = StopAsync();
     }
 
-    private sealed record ScreenFrame(byte[] Luma, double RedDominanceRatio, double AltimeterScore, string Source);
+    private sealed record ScreenFrame(
+        byte[] Luma,
+        double RedDominanceRatio,
+        double AltimeterScore,
+        string AltimeterDetail,
+        bool CursorVisible,
+        string Source);
+
+    private sealed record AltimeterDetection(double Score, string Detail);
 
     private static class ScreenFrameCapturer
     {
@@ -365,7 +411,7 @@ public sealed class ScreenVisualEventMonitor : IDisposable
             out ScreenFrame frame,
             out string status)
         {
-            frame = new ScreenFrame([], 0, 0, string.Empty);
+            frame = new ScreenFrame([], 0, 0, string.Empty, false, string.Empty);
 
             if (!TryFindStarCitizenWindow(out var bounds, out var source))
             {
@@ -379,16 +425,13 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 return false;
             }
 
-            if (IsCursorVisibleWithin(bounds))
-            {
-                status = "Screen capture paused while cursor is visible over StarCitizen.";
-                return false;
-            }
-
             try
             {
-                frame = Capture(bounds, sampleWidth, sampleHeight, source);
-                status = $"Screen capture active: {source} {bounds.Width}x{bounds.Height}.";
+                var cursorVisible = IsCursorVisibleWithin(bounds);
+                frame = Capture(bounds, sampleWidth, sampleHeight, source, cursorVisible);
+                status = cursorVisible
+                    ? $"Screen capture active: {source} {bounds.Width}x{bounds.Height}; cursor visible, screen-triggered effects suppressed."
+                    : $"Screen capture active: {source} {bounds.Width}x{bounds.Height}.";
                 return true;
             }
             catch (Exception ex) when (ex is ExternalException or ArgumentException or InvalidOperationException)
@@ -398,7 +441,7 @@ public sealed class ScreenVisualEventMonitor : IDisposable
             }
         }
 
-        private static ScreenFrame Capture(Rectangle bounds, int sampleWidth, int sampleHeight, string source)
+        private static ScreenFrame Capture(Rectangle bounds, int sampleWidth, int sampleHeight, string source, bool cursorVisible)
         {
             using var full = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb);
             using (var graphics = Graphics.FromImage(full))
@@ -406,7 +449,9 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
             }
 
-            var altimeterScore = AltimeterDetector.Score(full);
+            var altimeter = cursorVisible
+                ? new AltimeterDetection(0, "cursor visible")
+                : AltimeterDetector.Score(full);
 
             using var sample = new Bitmap(sampleWidth, sampleHeight, PixelFormat.Format24bppRgb);
             using (var graphics = Graphics.FromImage(sample))
@@ -416,10 +461,10 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 graphics.DrawImage(full, new Rectangle(0, 0, sampleWidth, sampleHeight));
             }
 
-            return BuildFrame(sample, altimeterScore, source);
+            return BuildFrame(sample, altimeter, cursorVisible, source);
         }
 
-        private static ScreenFrame BuildFrame(Bitmap bitmap, double altimeterScore, string source)
+        private static ScreenFrame BuildFrame(Bitmap bitmap, AltimeterDetection altimeter, bool cursorVisible, string source)
         {
             var width = bitmap.Width;
             var height = bitmap.Height;
@@ -458,7 +503,7 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 bitmap.UnlockBits(data);
             }
 
-            return new ScreenFrame(luma, (double)redDominantPixels / luma.Length, altimeterScore, source);
+            return new ScreenFrame(luma, (double)redDominantPixels / luma.Length, altimeter.Score, altimeter.Detail, cursorVisible, source);
         }
 
         private static bool TryFindStarCitizenWindow(out Rectangle bounds, out string source)
@@ -619,19 +664,18 @@ public sealed class ScreenVisualEventMonitor : IDisposable
 
         private static class AltimeterDetector
         {
-            private const int SampleWidth = 260;
-            private const int SampleHeight = 480;
-            private static readonly (double X, double Y, double Width, double Height)[] SearchRegions =
+            private const int SampleWidth = 240;
+            private const int SampleHeight = 300;
+            private static readonly SearchRegion[] SearchRegions =
             [
-                (0.50, 0.39, 0.10, 0.33),
-                (0.52, 0.39, 0.10, 0.33),
-                (0.48, 0.39, 0.10, 0.33),
-                (0.50, 0.43, 0.10, 0.31)
+                new("altimeter boxed value", 0.535, 0.420, 0.095, 0.150),
+                new("altimeter boxed value tight", 0.545, 0.430, 0.080, 0.135),
+                new("altimeter boxed value shifted", 0.525, 0.405, 0.110, 0.180)
             ];
 
-            public static double Score(Bitmap fullFrame)
+            public static AltimeterDetection Score(Bitmap fullFrame)
             {
-                var best = 0.0;
+                var best = new AltimeterDetection(0, "no matching region");
                 foreach (var region in SearchRegions)
                 {
                     var source = ToRectangle(fullFrame, region);
@@ -648,13 +692,17 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                         graphics.DrawImage(fullFrame, new Rectangle(0, 0, SampleWidth, SampleHeight), source, GraphicsUnit.Pixel);
                     }
 
-                    best = Math.Max(best, ScoreSample(sample));
+                    var detection = ScoreSample(sample, region.Name);
+                    if (detection.Score > best.Score)
+                    {
+                        best = detection;
+                    }
                 }
 
                 return best;
             }
 
-            private static Rectangle ToRectangle(Bitmap bitmap, (double X, double Y, double Width, double Height) region)
+            private static Rectangle ToRectangle(Bitmap bitmap, SearchRegion region)
             {
                 var x = (int)Math.Round(bitmap.Width * region.X);
                 var y = (int)Math.Round(bitmap.Height * region.Y);
@@ -665,31 +713,68 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 return rectangle;
             }
 
-            private static double ScoreSample(Bitmap bitmap)
+            private static AltimeterDetection ScoreSample(Bitmap bitmap, string regionName)
             {
                 var width = bitmap.Width;
                 var height = bitmap.Height;
-                var luma = ReadLuma(bitmap);
-                var bright = FindHudStrokePixels(luma, width, height);
-                var components = AnalyzeComponents(bright, width, height);
-                var brightRatio = components.BrightPixelCount / (double)(width * height);
-                var decimalLadderLike = components.DigitLikeCount >= 6 &&
-                                        components.RowGroupCount >= 3 &&
-                                        components.TinyDotCount >= 2;
-                var baseScore =
-                    components.DigitLikeCount +
-                    (components.RowGroupCount * 4.0) +
-                    (components.TinyDotCount * 0.25) +
-                    (components.LineLikeCount * 2.0) +
-                    Math.Min(20.0, brightRatio * 900.0);
+                var masks = ReadHudMasks(bitmap);
+                var total = AnalyzeComponents(masks.Any, width, height, new Rectangle(0, 0, width, height));
+                var unit = AnalyzeComponents(masks.Any, width, height, ToSampleRectangle(width, height, 0.31, 0.04, 0.36, 0.22));
+                var scale = AnalyzeComponents(masks.Any, width, height, ToSampleRectangle(width, height, 0.18, 0.17, 0.30, 0.78));
+                var value = AnalyzeComponents(masks.Any, width, height, ToSampleRectangle(width, height, 0.35, 0.44, 0.34, 0.22));
+                var neutralValue = AnalyzeComponents(masks.Neutral, width, height, ToSampleRectangle(width, height, 0.35, 0.44, 0.34, 0.22));
+                var box = AnalyzeBox(masks.Any, width, height, ToSampleRectangle(width, height, 0.30, 0.39, 0.46, 0.32));
 
-                return decimalLadderLike ? baseScore + 18.0 : Math.Min(baseScore, 22.0);
+                var boxLooksValid = box.EdgeCount >= 3 &&
+                                    box.HorizontalEdgeCount >= 1 &&
+                                    box.VerticalEdgeCount >= 1 &&
+                                    box.Score >= 35;
+                var valueLooksNumeric = value.PixelCount >= 24 &&
+                                        value.RowGroupCount >= 2 &&
+                                        value.ColumnGroupCount >= 3 &&
+                                        value.LineLikeCount <= 12 &&
+                                        (value.DigitLikeCount >= 1 || value.TinyDotCount >= 1 || neutralValue.PixelCount >= 12);
+                var scaleLooksPresent = scale.PixelCount is >= 60 and <= 2200 &&
+                                        scale.RowGroupCount is >= 4 and <= 14 &&
+                                        scale.ColumnGroupCount is >= 2 and <= 9 &&
+                                        scale.LineLikeCount <= 18;
+                var unitLooksPresent = unit.PixelCount is >= 16 and <= 900 &&
+                                       unit.RowGroupCount is >= 2 and <= 7 &&
+                                       unit.ColumnGroupCount is >= 2 and <= 12 &&
+                                       unit.LineLikeCount <= 6;
+                var cluttered = total.PixelCount > 5200 ||
+                                total.LineLikeCount > 45 ||
+                                value.PixelCount > 900 ||
+                                scale.PixelCount > 2400;
+                var hasAltimeterLayout = !cluttered &&
+                                          boxLooksValid &&
+                                          valueLooksNumeric &&
+                                          scaleLooksPresent &&
+                                          unitLooksPresent;
+
+                var score = hasAltimeterLayout
+                    ? 50 +
+                      box.Score +
+                      Math.Min(28, value.PixelCount / 4.0) +
+                      (value.ColumnGroupCount * 1.5) +
+                      (scaleLooksPresent ? 22 : 0) +
+                      (unitLooksPresent ? 8 : 0)
+                    : Math.Min(18, (box.Score * 0.35) + (value.PixelCount / 12.0) + (scale.PixelCount / 35.0));
+
+                score = Math.Clamp(score, 0, 180);
+                var detail =
+                    $"region={regionName} layout={hasAltimeterLayout} cluttered={cluttered} " +
+                    $"box={box.Compact} value={value.Compact} scale={scale.Compact} unit={unit.Compact} total={total.Compact}";
+                return new AltimeterDetection(score, detail);
             }
 
-            private static byte[] ReadLuma(Bitmap bitmap)
+            private static HudMasks ReadHudMasks(Bitmap bitmap)
             {
                 var width = bitmap.Width;
                 var height = bitmap.Height;
+                var red = new byte[width * height];
+                var green = new byte[width * height];
+                var blue = new byte[width * height];
                 var luma = new byte[width * height];
                 var data = bitmap.LockBits(
                     new Rectangle(0, 0, width, height),
@@ -707,7 +792,11 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                             for (var x = 0; x < width; x++)
                             {
                                 var pixel = row + (x * 3);
-                                luma[(y * width) + x] = (byte)((pixel[2] * 0.299) + (pixel[1] * 0.587) + (pixel[0] * 0.114));
+                                var index = (y * width) + x;
+                                blue[index] = pixel[0];
+                                green[index] = pixel[1];
+                                red[index] = pixel[2];
+                                luma[index] = (byte)((pixel[2] * 0.299) + (pixel[1] * 0.587) + (pixel[0] * 0.114));
                             }
                         }
                     }
@@ -717,54 +806,167 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                     bitmap.UnlockBits(data);
                 }
 
-                return luma;
-            }
-
-            private static bool[] FindHudStrokePixels(byte[] luma, int width, int height)
-            {
-                var bright = new bool[width * height];
+                var neutral = new bool[width * height];
+                var any = new bool[width * height];
                 for (var y = 1; y < height - 1; y++)
                 {
                     for (var x = 1; x < width - 1; x++)
                     {
                         var i = (y * width) + x;
-                        var value = luma[i];
-                        var gradient =
-                            Math.Abs(value - luma[i - 1]) +
-                            Math.Abs(value - luma[i + 1]) +
-                            Math.Abs(value - luma[i - width]) +
-                            Math.Abs(value - luma[i + width]);
-                        bright[i] = value > 130 && gradient > 35;
+                        var lumaGradient =
+                            Math.Abs(luma[i] - luma[i - 1]) +
+                            Math.Abs(luma[i] - luma[i + 1]) +
+                            Math.Abs(luma[i] - luma[i - width]) +
+                            Math.Abs(luma[i] - luma[i + width]);
+                        var channelGradient =
+                            ChannelDiff(red, green, blue, i, i - 1) +
+                            ChannelDiff(red, green, blue, i, i + 1) +
+                            ChannelDiff(red, green, blue, i, i - width) +
+                            ChannelDiff(red, green, blue, i, i + width);
+                        var edgeLike = lumaGradient >= 24 || channelGradient >= 96;
+                        var minChannel = Math.Min(red[i], Math.Min(green[i], blue[i]));
+                        var maxChannel = Math.Max(red[i], Math.Max(green[i], blue[i]));
+                        var neutralStroke = luma[i] >= 145 &&
+                                            maxChannel - minChannel <= 68 &&
+                                            edgeLike;
+                        var cyanStroke = luma[i] >= 75 &&
+                                         blue[i] >= 95 &&
+                                         green[i] >= 85 &&
+                                         blue[i] >= red[i] + 20 &&
+                                         green[i] >= red[i] + 8 &&
+                                         (edgeLike || maxChannel - minChannel >= 80);
+                        var amberStroke = luma[i] >= 80 &&
+                                          red[i] >= 120 &&
+                                          green[i] >= 65 &&
+                                          red[i] >= blue[i] + 34 &&
+                                          green[i] >= blue[i] + 8 &&
+                                          red[i] >= green[i] - 24 &&
+                                          (edgeLike || maxChannel - minChannel >= 80);
+
+                        neutral[i] = neutralStroke;
+                        any[i] = neutralStroke || cyanStroke || amberStroke;
                     }
                 }
 
-                return bright;
+                return new HudMasks(neutral, any);
             }
 
-            private static ComponentAnalysis AnalyzeComponents(bool[] bright, int width, int height)
+            private static int ChannelDiff(byte[] red, byte[] green, byte[] blue, int a, int b) =>
+                Math.Abs(red[a] - red[b]) +
+                Math.Abs(green[a] - green[b]) +
+                Math.Abs(blue[a] - blue[b]);
+
+            private static BoxEvidence AnalyzeBox(bool[] mask, int width, int height, Rectangle box)
             {
-                var seen = new bool[bright.Length];
-                var rowGroups = new HashSet<int>();
+                var horizontalBandHeight = Math.Max(6, box.Height / 5);
+                var verticalBandWidth = Math.Max(6, box.Width / 7);
+                var topBand = new Rectangle(box.Left, box.Top, box.Width, horizontalBandHeight);
+                var bottomBand = new Rectangle(box.Left, box.Bottom - horizontalBandHeight, box.Width, horizontalBandHeight);
+                var leftBand = new Rectangle(box.Left, box.Top, verticalBandWidth, box.Height);
+                var rightBand = new Rectangle(box.Right - verticalBandWidth, box.Top, verticalBandWidth, box.Height);
+
+                var top = MaxRowHits(mask, width, topBand);
+                var bottom = MaxRowHits(mask, width, bottomBand);
+                var left = MaxColumnHits(mask, width, height, leftBand);
+                var right = MaxColumnHits(mask, width, height, rightBand);
+                var horizontalThreshold = Math.Max(14, (int)Math.Round(box.Width * 0.20));
+                var verticalThreshold = Math.Max(10, (int)Math.Round(box.Height * 0.16));
+                var hasTop = top >= horizontalThreshold;
+                var hasBottom = bottom >= horizontalThreshold;
+                var hasLeft = left >= verticalThreshold;
+                var hasRight = right >= verticalThreshold;
+                var horizontalEdges = (hasTop ? 1 : 0) + (hasBottom ? 1 : 0);
+                var verticalEdges = (hasLeft ? 1 : 0) + (hasRight ? 1 : 0);
+                var edgeCount = horizontalEdges + verticalEdges;
+                var normalized =
+                    Math.Min(8, top / (double)horizontalThreshold * 2.5) +
+                    Math.Min(8, bottom / (double)horizontalThreshold * 2.5) +
+                    Math.Min(8, left / (double)verticalThreshold * 2.5) +
+                    Math.Min(8, right / (double)verticalThreshold * 2.5);
+                var score = (edgeCount * 14.0) + normalized;
+                if (edgeCount < 3)
+                {
+                    score = Math.Min(score, 18);
+                }
+
+                return new BoxEvidence(top, bottom, left, right, horizontalEdges, verticalEdges, edgeCount, score);
+            }
+
+            private static int MaxRowHits(bool[] mask, int width, Rectangle region)
+            {
+                var max = 0;
+                for (var y = region.Top; y < region.Bottom; y++)
+                {
+                    var hits = 0;
+                    for (var x = region.Left; x < region.Right; x++)
+                    {
+                        if (mask[(y * width) + x])
+                        {
+                            hits++;
+                        }
+                    }
+
+                    max = Math.Max(max, hits);
+                }
+
+                return max;
+            }
+
+            private static int MaxColumnHits(bool[] mask, int width, int height, Rectangle region)
+            {
+                _ = height;
+                var max = 0;
+                for (var x = region.Left; x < region.Right; x++)
+                {
+                    var hits = 0;
+                    for (var y = region.Top; y < region.Bottom; y++)
+                    {
+                        if (mask[(y * width) + x])
+                        {
+                            hits++;
+                        }
+                    }
+
+                    max = Math.Max(max, hits);
+                }
+
+                return max;
+            }
+
+            private static ComponentAnalysis AnalyzeComponents(bool[] mask, int width, int height, Rectangle bounds)
+            {
+                _ = height;
+                var seen = new bool[mask.Length];
+                var rowHits = new int[bounds.Height];
+                var columnHits = new int[bounds.Width];
                 var digitLikeCount = 0;
                 var tinyDotCount = 0;
                 var lineLikeCount = 0;
-                var brightPixelCount = 0;
+                var pixelCount = 0;
 
-                for (var i = 0; i < bright.Length; i++)
+                for (var y = bounds.Top; y < bounds.Bottom; y++)
                 {
-                    if (bright[i])
+                    for (var x = bounds.Left; x < bounds.Right; x++)
                     {
-                        brightPixelCount++;
+                        var index = (y * width) + x;
+                        if (!mask[index])
+                        {
+                            continue;
+                        }
+
+                        pixelCount++;
+                        rowHits[y - bounds.Top]++;
+                        columnHits[x - bounds.Left]++;
                     }
                 }
 
                 var queue = new Queue<int>();
-                for (var sy = 0; sy < height; sy++)
+                for (var sy = bounds.Top; sy < bounds.Bottom; sy++)
                 {
-                    for (var sx = 0; sx < width; sx++)
+                    for (var sx = bounds.Left; sx < bounds.Right; sx++)
                     {
                         var startIndex = (sy * width) + sx;
-                        if (!bright[startIndex] || seen[startIndex])
+                        if (!mask[startIndex] || seen[startIndex])
                         {
                             continue;
                         }
@@ -788,21 +990,20 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                             minY = Math.Min(minY, y);
                             maxY = Math.Max(maxY, y);
 
-                            EnqueueIfBright(index - 1, x > 0);
-                            EnqueueIfBright(index + 1, x < width - 1);
-                            EnqueueIfBright(index - width, y > 0);
-                            EnqueueIfBright(index + width, y < height - 1);
+                            EnqueueIfStroke(index - 1, x > bounds.Left);
+                            EnqueueIfStroke(index + 1, x < bounds.Right - 1);
+                            EnqueueIfStroke(index - width, y > bounds.Top);
+                            EnqueueIfStroke(index + width, y < bounds.Bottom - 1);
                         }
 
                         var componentWidth = maxX - minX + 1;
                         var componentHeight = maxY - minY + 1;
                         if (count >= 5 &&
-                            componentWidth is >= 2 and <= 36 &&
-                            componentHeight is >= 6 and <= 45 &&
-                            componentWidth / (double)componentHeight <= 2.2)
+                            componentWidth is >= 2 and <= 42 &&
+                            componentHeight is >= 5 and <= 62 &&
+                            componentWidth / (double)componentHeight <= 2.8)
                         {
                             digitLikeCount++;
-                            rowGroups.Add(((minY + maxY) / 2) / 24);
                         }
 
                         if (count is >= 2 and <= 12 &&
@@ -812,16 +1013,16 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                             tinyDotCount++;
                         }
 
-                        if (count >= 12 &&
-                            ((componentWidth > 24 && componentHeight <= 8) ||
-                             (componentHeight > 24 && componentWidth <= 8)))
+                        if (count >= 10 &&
+                            ((componentWidth >= 22 && componentHeight <= 7) ||
+                             (componentHeight >= 22 && componentWidth <= 7)))
                         {
                             lineLikeCount++;
                         }
 
-                        void EnqueueIfBright(int candidate, bool inBounds)
+                        void EnqueueIfStroke(int candidate, bool inBounds)
                         {
-                            if (!inBounds || !bright[candidate] || seen[candidate])
+                            if (!inBounds || !mask[candidate] || seen[candidate])
                             {
                                 return;
                             }
@@ -833,19 +1034,78 @@ public sealed class ScreenVisualEventMonitor : IDisposable
                 }
 
                 return new ComponentAnalysis(
-                    brightPixelCount,
+                    pixelCount,
                     digitLikeCount,
-                    rowGroups.Count,
+                    CountHitGroups(rowHits, Math.Max(2, bounds.Width / 48)),
+                    CountHitGroups(columnHits, Math.Max(2, bounds.Height / 64)),
                     tinyDotCount,
                     lineLikeCount);
             }
 
+            private static int CountHitGroups(int[] hits, int minHits)
+            {
+                var groups = 0;
+                var inGroup = false;
+                foreach (var hit in hits)
+                {
+                    if (hit >= minHits)
+                    {
+                        if (!inGroup)
+                        {
+                            groups++;
+                        }
+
+                        inGroup = true;
+                    }
+                    else
+                    {
+                        inGroup = false;
+                    }
+                }
+
+                return groups;
+            }
+
+            private static Rectangle ToSampleRectangle(int width, int height, double x, double y, double regionWidth, double regionHeight)
+            {
+                var rectangle = new Rectangle(
+                    (int)Math.Round(width * x),
+                    (int)Math.Round(height * y),
+                    (int)Math.Round(width * regionWidth),
+                    (int)Math.Round(height * regionHeight));
+                rectangle.Intersect(new Rectangle(0, 0, width, height));
+                return rectangle;
+            }
+
+            private sealed record SearchRegion(string Name, double X, double Y, double Width, double Height);
+
+            private sealed record HudMasks(bool[] Neutral, bool[] Any);
+
             private sealed record ComponentAnalysis(
-                int BrightPixelCount,
+                int PixelCount,
                 int DigitLikeCount,
                 int RowGroupCount,
+                int ColumnGroupCount,
                 int TinyDotCount,
-                int LineLikeCount);
+                int LineLikeCount)
+            {
+                public string Compact =>
+                    $"px={PixelCount},digits={DigitLikeCount},rows={RowGroupCount},cols={ColumnGroupCount},dots={TinyDotCount},lines={LineLikeCount}";
+            }
+
+            private sealed record BoxEvidence(
+                int TopPixels,
+                int BottomPixels,
+                int LeftPixels,
+                int RightPixels,
+                int HorizontalEdgeCount,
+                int VerticalEdgeCount,
+                int EdgeCount,
+                double Score)
+            {
+                public string Compact =>
+                    $"score={Score:0.#},edges={EdgeCount},h={HorizontalEdgeCount},v={VerticalEdgeCount},top={TopPixels},bottom={BottomPixels},left={LeftPixels},right={RightPixels}";
+            }
         }
     }
 }

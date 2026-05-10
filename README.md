@@ -34,7 +34,7 @@ If needed, the ZIP also includes launchers for specific output paths:
 - `Run-DirectInput.cmd` - force Windows DirectInput
 - `Run-MozaSdk.cmd` - force the MOZA SDK path; not currently expected to work with AB6
 - `Run-Preview.cmd` - no hardware output; useful for parser/UI testing
-- `Run-Screen.cmd` - experimental DirectInput mode with screen-capture impact detection enabled
+- `Run-Screen.cmd` - experimental DirectInput mode with screen-capture impact and atmosphere detection
 
 No installer is required. The release build is self-contained and does not require users to install the .NET runtime.
 
@@ -48,7 +48,7 @@ When monitoring starts, the app tails new log lines from that point forward. It 
 
 `Run-Screen.cmd` enables `MOZA_SC_SCREEN=1`. In this mode the app samples the visible Star Citizen window and looks for sudden visual impact flashes or screen-motion changes, then maps those candidates to the normal landing/impact bump effect.
 
-The same experimental screen path also looks for the in-atmosphere altimeter HUD shape. When the altimeter is detected for several consecutive frames it starts the in-atmosphere rumble; when the altimeter is absent for several seconds it stops the rumble.
+The same experimental screen path also looks for the right-side boxed decimal altimeter readout. When that boxed readout is detected for several consecutive frames it starts the in-atmosphere rumble; when the readout is absent for several seconds it stops the rumble. A visible cursor suppresses screen-triggered effects so menus do not create rumble.
 
 This does not read Star Citizen memory or inject into the game process. It is experimental and may need threshold tuning for different displays, graphics settings, and HUD scenes.
 

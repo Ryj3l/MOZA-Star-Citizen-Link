@@ -214,7 +214,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            var wasMonitoring = IsMonitoring || _tailer is not null;
+            var wasMonitoring = IsMonitoring || _tailer is not null || _screenMonitor is not null;
 
             if (_tailer is not null)
             {
@@ -244,7 +244,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             IsMonitoring = false;
             Status = "Monitoring stopped.";
-            AddEvent($"Monitoring stopped; read {_logLinesRead} line(s), matched {_logEventsMatched} event(s), and stopped all sustained effects.");
+            AddEvent($"Monitoring stopped; read {_logLinesRead} line(s), matched {_logEventsMatched} log event(s), {_screenEventsMatched} screen event(s), and stopped all sustained effects.");
             AppLog.Write($"Stopped Game.log monitoring. Lines read: {_logLinesRead}. Events matched: {_logEventsMatched}. {GetLogFileSummary(GameLogPath)}");
         }
         catch (Exception ex)
