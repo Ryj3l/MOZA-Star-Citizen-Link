@@ -51,6 +51,7 @@ public partial class App : System.Windows.Application
         };
 
         base.OnStartup(e);
+        new MainWindow().Show();
     }
 
     protected override void OnExit(ExitEventArgs e)

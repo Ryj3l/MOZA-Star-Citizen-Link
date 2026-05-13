@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** Serilog
-- **Version pinned to:** 4.0.0 (or latest 4.x stable at time of adoption)
+- **Version pinned to:** 4.2.0 (bumped from 4.0.0 in T-04: Serilog.Settings.Configuration 9.0.0 requires >= 4.2.0; still within approved 4.x family)
 - **Source:** NuGet (https://www.nuget.org/packages/Serilog)
 - **License (SPDX identifier):** Apache-2.0
 - **License-compatible with proprietary distribution:** Yes
