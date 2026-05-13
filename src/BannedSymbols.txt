@@ -48,5 +48,4 @@ N:Newtonsoft.Json;Use System.Text.Json instead. PRP §2.9.
 # ============================================================
 # Deprecated test framework features.
 # ============================================================
-T:Xunit.FactAttribute;BLOCK:Not actually banned — placeholder showing format.
-# Replace ":BLOCK:..." with real content if a future ban is needed.
+# (No test framework bans at this time; add entries here if needed in future tasks.)
