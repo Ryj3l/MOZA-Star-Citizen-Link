@@ -4,17 +4,17 @@ namespace Moza.ScLink.Core;
 
 public interface IForceFeedbackDevice
 {
-    string Name { get; }
+    public string Name { get; }
 
-    string Status { get; }
+    public string Status { get; }
 
-    Task InitializeAsync(CancellationToken cancellationToken);
+    public Task InitializeAsync(CancellationToken cancellationToken);
 
-    Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken);
+    public Task PrepareAsync(IEnumerable<ForceEffect> effects, CancellationToken cancellationToken);
 
-    Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken);
+    public Task PlayAsync(ForceEffect effect, CancellationToken cancellationToken);
 
-    Task StopAsync(string stateKey, CancellationToken cancellationToken);
+    public Task StopAsync(string stateKey, CancellationToken cancellationToken);
 
-    Task StopAllAsync(CancellationToken cancellationToken);
+    public Task StopAllAsync(CancellationToken cancellationToken);
 }
