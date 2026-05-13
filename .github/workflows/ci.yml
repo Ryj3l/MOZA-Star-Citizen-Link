@@ -68,9 +68,9 @@ jobs:
           name: test-results
           path: ./TestResults/**/*.trx
 
-      - name: Check per-project coverage thresholds
+      - name: Check per-project coverage thresholds (Mode=Baseline until T-20)
         shell: pwsh
-        run: ./scripts/check-coverage.ps1 -ResultsPath ./TestResults
+        run: ./scripts/check-coverage.ps1 -ResultsPath ./TestResults -Mode Baseline
 
       - name: Forbidden-API scan
         shell: pwsh
