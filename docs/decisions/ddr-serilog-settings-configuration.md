@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** Serilog.Settings.Configuration
-- **Version pinned to:** 9.0.0 (or latest 9.x stable)
+- **Version pinned to:** 9.0.0 (latest stable in 9.x as of 2026-05-13; 9.0.1 is pre-release only)
 - **Source:** NuGet
 - **License (SPDX identifier):** Apache-2.0
 - **License-compatible with proprietary distribution:** Yes
@@ -34,8 +34,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

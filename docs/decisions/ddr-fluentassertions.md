@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** FluentAssertions
-- **Version pinned to:** 6.12.x
+- **Version pinned to:** 6.12.2 (latest stable in 6.x as of 2026-05-13; 6.x line is at end-of-life following 7.0 commercial pivot)
 
 > **⚠️ Licensing note (read before adoption):** FluentAssertions 7.0+ changed to a paid commercial license. **We pin to the 6.x line, which remains Apache-2.0.** If the 6.x line is later abandoned, re-open this DDR and consider migration to `Shouldly` (BSD) or `xUnit`'s built-in `Assert`.
 
@@ -36,8 +36,8 @@
 ## Decision
 
 - **Approved with pin to 6.x and migration plan**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

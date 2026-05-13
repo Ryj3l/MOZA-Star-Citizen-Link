@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** xunit, xunit.runner.visualstudio
-- **Version pinned to:** 2.9.x
+- **Version pinned to:** 2.9.2 (2.9.3 available as patch; 2.x is now security-only — xunit v3 migration is a separate future decision)
 - **Source:** NuGet
 - **License (SPDX identifier):** Apache-2.0 (xunit), MIT (xunit.runner.visualstudio)
 - **License-compatible with proprietary distribution:** Yes
@@ -34,8 +34,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** Microsoft.Extensions.Hosting
-- **Version pinned to:** 8.0.x (LTS, matched to .NET 8)
+- **Version pinned to:** 8.0.1 (latest stable in 8.0.x as of 2026-05-13)
 - **Source:** NuGet
 - **License (SPDX identifier):** MIT
 - **License-compatible with proprietary distribution:** Yes
@@ -34,8 +34,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

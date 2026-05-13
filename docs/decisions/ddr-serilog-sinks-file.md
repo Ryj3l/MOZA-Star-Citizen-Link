@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** Serilog.Sinks.File
-- **Version pinned to:** 6.0.0 (or latest 6.x stable)
+- **Version pinned to:** 6.0.0 (latest stable in 6.x as of 2026-05-13)
 - **Source:** NuGet
 - **License (SPDX identifier):** Apache-2.0
 - **License-compatible with proprietary distribution:** Yes
@@ -34,8 +34,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 
