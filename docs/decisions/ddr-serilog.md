@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** Serilog
-- **Version pinned to:** 4.0.0 (or latest 4.x stable at time of adoption)
+- **Version pinned to:** See Decision History below for version
 - **Source:** NuGet (https://www.nuget.org/packages/Serilog)
 - **License (SPDX identifier):** Apache-2.0
 - **License-compatible with proprietary distribution:** Yes
@@ -32,11 +32,24 @@
 - **Anti-cheat-adjacency risk:** None.
 - **Cost:** Free.
 
-## Decision
+## Decision History
 
-- **Approved**
+### 2026-05-12 — Initial pin: 4.0.0
+
+- **Version pinned to:** 4.0.0
+- **Status:** Superseded by 2026-05-13 bump
 - **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Date approved:** 2026-05-12
+- **Rationale:** Initial Serilog selection per PRP §8.1.
+
+### 2026-05-13 — Bump to 4.2.0 (T-04)
+
+- **Version pinned to:** 4.2.0
+- **Status:** Active
+- **Approver:** PENDING OPERATOR REVIEW (this bump is being reviewed as part of PR #11)
+- **Date approved:** 2026-05-13 (pending)
+- **Rationale:** Serilog.Settings.Configuration 9.0.0 requires Serilog >= 4.2.0. The 4.0.0 → 4.2.0 bump is a transitive constraint surfaced during T-04 execution. Still within the originally-evaluated 4.x family (Apache-2.0, low maintenance risk, no new CVEs).
+- **Discovered during:** T-04 (PR #11)
 
 ## Validation
 

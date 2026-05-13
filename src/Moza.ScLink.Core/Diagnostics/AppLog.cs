@@ -1,39 +1,21 @@
-using System.IO;
+using Serilog;
 
 namespace Moza.ScLink.Core.Diagnostics;
 
 public static class AppLog
 {
-    private static readonly object Sync = new();
-    private static readonly int ProcessId = Environment.ProcessId;
+    // Pre-host no-op: replaced by Program.Main after IHostBuilder.Build()
+    public static ILogger Logger { get; internal set; } = new LoggerConfiguration().CreateLogger();
 
-    public static string LogPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "MozaStarCitizen",
-        "app.log");
+    public static string LogPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MozaStarCitizen", "logs",
+            $"app-{DateTime.Now:yyyyMMdd}.log");
 
-    public static void Write(string message)
-    {
-        try
-        {
-            var directory = Path.GetDirectoryName(LogPath);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
+    public static void Write(string message) =>
+        Logger.Information("{Message}", message);
 
-            lock (Sync)
-            {
-                File.AppendAllText(LogPath, $"{DateTimeOffset.Now:O} [pid:{ProcessId}] {message}{Environment.NewLine}");
-            }
-        }
-        catch
-        {
-        }
-    }
-
-    public static void Write(Exception exception, string context)
-    {
-        Write($"{context}: {exception}");
-    }
+    public static void Write(Exception exception, string context) =>
+        Logger.Error(exception, "{Context}", context);
 }
