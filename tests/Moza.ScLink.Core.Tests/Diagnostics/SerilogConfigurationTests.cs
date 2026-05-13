@@ -44,7 +44,9 @@ public sealed class SerilogConfigurationTests : IDisposable
                 rollingInterval: RollingInterval.Day)
             .CreateLogger();
         for (var i = 0; i < 50; i++)
+        {
             logger.Information("padding line {I} with enough text to exceed the 200-byte limit", i);
+        }
         ((IDisposable)logger).Dispose();
 
         Directory.GetFiles(_tempDir, "*.log").Length.Should().BeGreaterThan(1);

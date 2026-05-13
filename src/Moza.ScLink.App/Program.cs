@@ -61,7 +61,9 @@ public static class Program
                 var profile = Environment.GetEnvironmentVariable("MOZA_SC_LOG_PROFILE")
                               ?? string.Empty;
                 if (!string.IsNullOrEmpty(profile))
+                {
                     cfg.AddJsonFile($"appsettings.{profile}.json", optional: true);
+                }
 
                 cfg.AddCommandLine(args);
             })
