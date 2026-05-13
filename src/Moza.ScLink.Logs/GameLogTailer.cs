@@ -101,9 +101,8 @@ public sealed class GameLogTailer : IDisposable
                 stream.Seek(position, SeekOrigin.Begin);
 
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-                while (!reader.EndOfStream)
+                while (await reader.ReadLineAsync(cancellationToken) is { } line)
                 {
-                    var line = await reader.ReadLineAsync(cancellationToken);
                     if (!string.IsNullOrWhiteSpace(line))
                     {
                         LineRead?.Invoke(this, line);

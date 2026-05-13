@@ -8,23 +8,23 @@ namespace Moza.ScLink.DirectInput.Native;
 internal interface IDirectInput8W
 {
     [PreserveSig]
-    int CreateDevice(ref Guid rguid, out IDirectInputDevice8W directInputDevice, IntPtr outer);
+    public int CreateDevice(ref Guid rguid, out IDirectInputDevice8W directInputDevice, IntPtr outer);
 
     [PreserveSig]
-    int EnumDevices(
+    public int EnumDevices(
         int deviceType,
         IntPtr callback,
         IntPtr context,
         int flags);
 
     [PreserveSig]
-    int GetDeviceStatus(ref Guid instanceGuid);
+    public int GetDeviceStatus(ref Guid instanceGuid);
 
     [PreserveSig]
-    int RunControlPanel(IntPtr ownerWindow, int flags);
+    public int RunControlPanel(IntPtr ownerWindow, int flags);
 
     [PreserveSig]
-    int Initialize(IntPtr instanceHandle, int version);
+    public int Initialize(IntPtr instanceHandle, int version);
 }
 
 [ComImport]
@@ -33,64 +33,64 @@ internal interface IDirectInput8W
 internal interface IDirectInputDevice8W
 {
     [PreserveSig]
-    int GetCapabilities(IntPtr capabilities);
+    public int GetCapabilities(IntPtr capabilities);
 
     [PreserveSig]
-    int EnumObjects(IntPtr callback, IntPtr context, int flags);
+    public int EnumObjects(IntPtr callback, IntPtr context, int flags);
 
     [PreserveSig]
-    int GetProperty(ref Guid propertyGuid, IntPtr property);
+    public int GetProperty(ref Guid propertyGuid, IntPtr property);
 
     [PreserveSig]
-    int SetProperty(ref Guid propertyGuid, IntPtr property);
+    public int SetProperty(ref Guid propertyGuid, IntPtr property);
 
     [PreserveSig]
-    int Acquire();
+    public int Acquire();
 
     [PreserveSig]
-    int Unacquire();
+    public int Unacquire();
 
     [PreserveSig]
-    int GetDeviceState(int dataSize, IntPtr data);
+    public int GetDeviceState(int dataSize, IntPtr data);
 
     [PreserveSig]
-    int GetDeviceData(int objectDataSize, IntPtr objectData, ref int inOut, int flags);
+    public int GetDeviceData(int objectDataSize, IntPtr objectData, ref int inOut, int flags);
 
     [PreserveSig]
-    int SetDataFormat(IntPtr dataFormat);
+    public int SetDataFormat(IntPtr dataFormat);
 
     [PreserveSig]
-    int SetEventNotification(IntPtr eventHandle);
+    public int SetEventNotification(IntPtr eventHandle);
 
     [PreserveSig]
-    int SetCooperativeLevel(IntPtr windowHandle, int flags);
+    public int SetCooperativeLevel(IntPtr windowHandle, int flags);
 
     [PreserveSig]
-    int GetObjectInfo(IntPtr objectInstance, int objectId, int flags);
+    public int GetObjectInfo(IntPtr objectInstance, int objectId, int flags);
 
     [PreserveSig]
-    int GetDeviceInfo(IntPtr deviceInstance);
+    public int GetDeviceInfo(IntPtr deviceInstance);
 
     [PreserveSig]
-    int RunControlPanel(IntPtr ownerWindow, int flags);
+    public int RunControlPanel(IntPtr ownerWindow, int flags);
 
     [PreserveSig]
-    int Initialize(IntPtr instanceHandle, int version, ref Guid instanceGuid);
+    public int Initialize(IntPtr instanceHandle, int version, ref Guid instanceGuid);
 
     [PreserveSig]
-    int CreateEffect(ref Guid effectGuid, ref DirectInputEffect effect, out IDirectInputEffect directInputEffect, IntPtr outer);
+    public int CreateEffect(ref Guid effectGuid, ref DirectInputEffect effect, out IDirectInputEffect directInputEffect, IntPtr outer);
 
     [PreserveSig]
-    int EnumEffects(IntPtr callback, IntPtr context, int effectType);
+    public int EnumEffects(IntPtr callback, IntPtr context, int effectType);
 
     [PreserveSig]
-    int GetEffectInfo(IntPtr effectInfo, ref Guid effectGuid);
+    public int GetEffectInfo(IntPtr effectInfo, ref Guid effectGuid);
 
     [PreserveSig]
-    int GetForceFeedbackState(out int state);
+    public int GetForceFeedbackState(out int state);
 
     [PreserveSig]
-    int SendForceFeedbackCommand(int flags);
+    public int SendForceFeedbackCommand(int flags);
 }
 
 [ComImport]
@@ -99,34 +99,34 @@ internal interface IDirectInputDevice8W
 internal interface IDirectInputEffect
 {
     [PreserveSig]
-    int Initialize(IntPtr instanceHandle, int version, ref Guid effectGuid);
+    public int Initialize(IntPtr instanceHandle, int version, ref Guid effectGuid);
 
     [PreserveSig]
-    int GetEffectGuid(out Guid effectGuid);
+    public int GetEffectGuid(out Guid effectGuid);
 
     [PreserveSig]
-    int GetParameters(IntPtr effect, int flags);
+    public int GetParameters(IntPtr effect, int flags);
 
     [PreserveSig]
-    int SetParameters(ref DirectInputEffect effect, int flags);
+    public int SetParameters(ref DirectInputEffect effect, int flags);
 
     [PreserveSig]
-    int Start(int iterations, int flags);
+    public int Start(int iterations, int flags);
 
     [PreserveSig]
-    int Stop();
+    public int Stop();
 
     [PreserveSig]
-    int GetEffectStatus(out int flags);
+    public int GetEffectStatus(out int flags);
 
     [PreserveSig]
-    int Download();
+    public int Download();
 
     [PreserveSig]
-    int Unload();
+    public int Unload();
 
     [PreserveSig]
-    int Escape(IntPtr escape);
+    public int Escape(IntPtr escape);
 }
 
 [UnmanagedFunctionPointer(CallingConvention.StdCall)]

@@ -18,7 +18,7 @@ public sealed class StarCitizenEventParser
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly IReadOnlyList<CompiledPattern> _patterns;
+    private readonly CompiledPattern[] _patterns;
 
     private StarCitizenEventParser(IEnumerable<EventPattern> patterns)
     {
@@ -28,7 +28,7 @@ public sealed class StarCitizenEventParser
             .ToArray();
     }
 
-    public int PatternCount => _patterns.Count;
+    public int PatternCount => _patterns.Length;
 
     public static StarCitizenEventParser LoadDefault()
     {
