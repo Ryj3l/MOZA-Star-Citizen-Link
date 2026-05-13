@@ -6,7 +6,7 @@ namespace Moza.ScLink.DirectInput;
 
 public sealed class FallbackForceFeedbackDevice : IForceFeedbackDevice
 {
-    private readonly IReadOnlyList<IForceFeedbackDevice> _devices;
+    private readonly IForceFeedbackDevice[] _devices;
     private readonly HashSet<IForceFeedbackDevice> _initializedDevices = [];
     private IForceFeedbackDevice? _currentDevice;
 
@@ -66,7 +66,7 @@ public sealed class FallbackForceFeedbackDevice : IForceFeedbackDevice
     {
         Exception? lastException = null;
 
-        for (var i = 0; i < _devices.Count; i++)
+        for (var i = 0; i < _devices.Length; i++)
         {
             var device = _devices[i];
             try
