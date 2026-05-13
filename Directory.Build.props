@@ -1,0 +1,12 @@
+<Project>
+
+  <!--
+    Root-level Directory.Build.props.
+    Projects under src/ find src/Directory.Build.props first (MSBuild stops at the
+    nearest ancestor that contains the file), so this file only applies to projects
+    that are NOT under src/ — specifically the test projects under tests/.
+    It delegates all real logic to src/Directory.Build.props.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)src\Directory.Build.props" />
+
+</Project>

@@ -1,0 +1,11 @@
+<Project>
+
+  <!--
+    Root-level Directory.Packages.props.
+    NuGet central package management traverses up from the project file.
+    Projects under src/ find src/Directory.Packages.props first.
+    Projects under tests/ find this root file and delegate to src/Directory.Packages.props.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)src\Directory.Packages.props" />
+
+</Project>
