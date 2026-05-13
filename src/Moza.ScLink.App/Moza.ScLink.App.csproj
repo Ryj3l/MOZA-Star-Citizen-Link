@@ -6,4 +6,13 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Moza.ScLink.Core\Moza.ScLink.Core.csproj" />
+    <ProjectReference Include="..\Moza.ScLink.Logs\Moza.ScLink.Logs.csproj" />
+    <ProjectReference Include="..\Moza.ScLink.DirectInput\Moza.ScLink.DirectInput.csproj" />
+    <ProjectReference Include="..\Moza.ScLink.Effects\Moza.ScLink.Effects.csproj" />
+    <ProjectReference Include="..\Moza.ScLink.Diagnostics\Moza.ScLink.Diagnostics.csproj" />
+    <ProjectReference Include="..\Moza.ScLink.Profiles\Moza.ScLink.Profiles.csproj" />
+  </ItemGroup>
+
 </Project>
