@@ -118,3 +118,7 @@ packages/
 *.cachefile
 *.VC.db
 *.VC.opendb
+
+# Claude Code per-project state (local agent config, never committed)
+.claude/
+
