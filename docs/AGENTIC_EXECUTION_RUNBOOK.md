@@ -43,6 +43,7 @@ pwsh --version          # should report 7.x or higher; if missing, install from 
 
 # .NET SDK 8
 dotnet --version        # should report 8.0.x or higher
+# Operator's local .NET SDK must match the version pinned in global.json (currently 8.0.421). Run `dotnet --version` to verify. Install via `winget install Microsoft.DotNet.SDK.8` if needed.
 
 # Git
 git --version
