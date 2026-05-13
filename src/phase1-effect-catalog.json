@@ -1,0 +1,162 @@
+{
+  "$schema": "../Schemas/effect-catalog.schema.json",
+  "schemaVersion": 1,
+  "catalogId": "phase1",
+  "description": "MOZA Star Citizen Link Phase 1 effect catalog. Seven log-driven effects. Parameters are first-pass and are expected to be refined during Phase 1 hardware validation (T-23).",
+  "effects": [
+    {
+      "effectId": "quantum-spool-v1",
+      "displayName": "Quantum spool",
+      "category": "Flight",
+      "effectType": "PeriodicWithEnvelope",
+      "baseIntensity": 0.42,
+      "frequencyHz": 34,
+      "durationMs": 8000,
+      "directionX": 0.0,
+      "directionY": 1.0,
+      "envelope": {
+        "attackMs": 250,
+        "holdMs": 7000,
+        "decayMs": 500,
+        "releaseMs": 250,
+        "attackLevel": 0.3,
+        "sustainLevel": 1.0
+      },
+      "isSustained": true,
+      "stateKey": "quantum-spool",
+      "stoppedBy": ["QuantumSpoolEnded", "QuantumJumpStarted", "EmergencyStop"],
+      "notes": "Sustained periodic vibration during quantum spool window. Frequency chosen for a 'spinning up' feel; intensity climbs over the attack phase."
+    },
+    {
+      "effectId": "quantum-jump-exit-v1",
+      "displayName": "Quantum jump exit",
+      "category": "Flight",
+      "effectType": "PeriodicWithEnvelope",
+      "baseIntensity": 0.6,
+      "frequencyHz": 22,
+      "durationMs": 450,
+      "directionX": 0.0,
+      "directionY": 1.0,
+      "envelope": {
+        "attackMs": 30,
+        "holdMs": 120,
+        "decayMs": 200,
+        "releaseMs": 100,
+        "attackLevel": 1.0,
+        "sustainLevel": 0.7
+      },
+      "isSustained": false,
+      "stateKey": null,
+      "stoppedBy": ["EmergencyStop"],
+      "notes": "Sharp transient on jump exit. Lower frequency than spool to differentiate."
+    },
+    {
+      "effectId": "atmosphere-entry-v1",
+      "displayName": "Atmosphere entry",
+      "category": "Environment",
+      "effectType": "PeriodicWithEnvelope",
+      "baseIntensity": 0.22,
+      "frequencyHz": 18,
+      "durationMs": 0,
+      "directionX": 0.0,
+      "directionY": 1.0,
+      "envelope": {
+        "attackMs": 1500,
+        "holdMs": 0,
+        "decayMs": 0,
+        "releaseMs": 800,
+        "attackLevel": 0.5,
+        "sustainLevel": 1.0
+      },
+      "isSustained": true,
+      "stateKey": "atmosphere",
+      "stoppedBy": ["AtmosphereExited", "EmergencyStop"],
+      "notes": "Sustained low-frequency rumble representing atmospheric buffet. Long attack so entry feels gradual. Intensity capped by MaxSustainedIntensity (0.7) in the safety limiter."
+    },
+    {
+      "effectId": "atmosphere-exit-v1",
+      "displayName": "Atmosphere exit",
+      "category": "Environment",
+      "effectType": "Stop",
+      "baseIntensity": 0.0,
+      "frequencyHz": 0,
+      "durationMs": 0,
+      "directionX": 0.0,
+      "directionY": 0.0,
+      "envelope": null,
+      "isSustained": false,
+      "stateKey": "atmosphere",
+      "stoppedBy": [],
+      "notes": "Special effect: this is a stop command for the sustained atmosphere effect. Implemented as a StopEffectCommand rather than a PlayEffectCommand by the resolver."
+    },
+    {
+      "effectId": "landing-contact-v1",
+      "displayName": "Landing contact",
+      "category": "Flight",
+      "effectType": "ConstantForce",
+      "baseIntensity": 0.55,
+      "frequencyHz": 0,
+      "durationMs": 220,
+      "directionX": 0.0,
+      "directionY": -1.0,
+      "envelope": {
+        "attackMs": 20,
+        "holdMs": 80,
+        "decayMs": 100,
+        "releaseMs": 20,
+        "attackLevel": 1.0,
+        "sustainLevel": 0.6
+      },
+      "isSustained": false,
+      "stateKey": null,
+      "stoppedBy": ["EmergencyStop"],
+      "notes": "Short downward bump on touchdown. Direction is -Y (toward pilot) to suggest deceleration. Intensity is moderate to differentiate from hull impact (Phase 2)."
+    },
+    {
+      "effectId": "weapon-fire-generic-v1",
+      "displayName": "Weapon fire (generic)",
+      "category": "Combat",
+      "effectType": "Periodic",
+      "baseIntensity": 0.4,
+      "frequencyHz": 60,
+      "durationMs": 90,
+      "directionX": 0.0,
+      "directionY": 1.0,
+      "envelope": {
+        "attackMs": 5,
+        "holdMs": 40,
+        "decayMs": 40,
+        "releaseMs": 5,
+        "attackLevel": 1.0,
+        "sustainLevel": 0.7
+      },
+      "isSustained": false,
+      "stateKey": null,
+      "stoppedBy": ["EmergencyStop"],
+      "notes": "Phase 1 placeholder for weapon fire — generic per-shot pulse. Phase 2 splits this into ballistic / energy / missile with distinct envelopes and frequencies."
+    },
+    {
+      "effectId": "vehicle-destruction-v1",
+      "displayName": "Vehicle destruction",
+      "category": "Combat",
+      "effectType": "PeriodicWithEnvelope",
+      "baseIntensity": 0.8,
+      "frequencyHz": 14,
+      "durationMs": 1400,
+      "directionX": 0.0,
+      "directionY": 1.0,
+      "envelope": {
+        "attackMs": 50,
+        "holdMs": 400,
+        "decayMs": 800,
+        "releaseMs": 150,
+        "attackLevel": 1.0,
+        "sustainLevel": 0.7
+      },
+      "isSustained": false,
+      "stateKey": null,
+      "stoppedBy": ["EmergencyStop"],
+      "notes": "Strong low-frequency rumble with long decay. Clipped by MaxIntensityRecommended (per-device cap) at the safety limiter."
+    }
+  ]
+}

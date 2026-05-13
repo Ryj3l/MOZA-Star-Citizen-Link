@@ -1,0 +1,84 @@
+<Project>
+
+  <!--
+    Directory.Packages.props
+    Centralized package versions. Individual .csproj files reference packages by name only;
+    versions are managed here. See PRP §2.10 and §4.
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <!-- =====================================================================
+       Phase 1 production dependencies — all have DDRs in docs/decisions/
+       ===================================================================== -->
+
+  <ItemGroup Label="MVVM and UI">
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Hosting and DI">
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Logging">
+    <PackageVersion Include="Serilog" Version="4.0.0" />
+    <PackageVersion Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageVersion Include="Serilog.Settings.Configuration" Version="9.0.0" />
+    <PackageVersion Include="Serilog.Enrichers.Process" Version="3.0.0" />
+    <PackageVersion Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Force feedback">
+    <!-- Verify latest stable at adoption; pin then -->
+    <PackageVersion Include="Vortice.DirectInput" Version="3.6.2" />
+  </ItemGroup>
+
+  <ItemGroup Label="Analyzers and code quality">
+    <PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="3.3.4" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- =====================================================================
+       Phase 1 test dependencies — all have DDRs
+       ===================================================================== -->
+
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="xunit" Version="2.9.2" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <!--
+      FluentAssertions: PIN TO 6.x ONLY. 7.0+ is commercially licensed.
+      Do NOT bump. See ddr-fluentassertions.md.
+    -->
+    <PackageVersion Include="FluentAssertions" Version="6.12.2" />
+    <PackageVersion Include="NSubstitute" Version="5.1.0" />
+    <PackageVersion Include="NSubstitute.Analyzers.CSharp" Version="1.0.17" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.2" />
+  </ItemGroup>
+
+  <!-- =====================================================================
+       Phase 2 dependencies — NOT to be added until phase 2 starts.
+       Listed here for visibility only; commented out.
+       ===================================================================== -->
+
+  <!--
+  <ItemGroup Label="Phase 2 — audio">
+    <PackageVersion Include="NAudio" Version="2.2.1" />
+    <PackageVersion Include="MathNet.Numerics" Version="5.0.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Phase 2 — crash reporting (opt-in)">
+    <PackageVersion Include="Sentry" Version="..." />
+    <PackageVersion Include="Sentry.Serilog" Version="..." />
+  </ItemGroup>
+  -->
+
+</Project>

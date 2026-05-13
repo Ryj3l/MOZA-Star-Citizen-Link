@@ -1,0 +1,19 @@
+{
+  "$schema": "../Schemas/device-allowlist.schema.json",
+  "schemaVersion": 1,
+  "description": "Force-feedback devices the application is permitted to drive. PRP §13.3 forbids driving unknown devices.",
+  "allowedDeviceModels": [
+    {
+      "model": "MozaAb6",
+      "productNamePatterns": ["MOZA AB6", "AB6 FFB", "AB6"],
+      "matchMode": "containsAnyCaseInsensitive"
+    },
+    {
+      "model": "MozaAb9",
+      "productNamePatterns": ["MOZA AB9", "AB9 FFB", "AB9"],
+      "matchMode": "containsAnyCaseInsensitive"
+    }
+  ],
+  "denylistOverride": [],
+  "notes": "To add a new MOZA flight base, append an entry here AND update DeviceModel enum AND add a device profile in device-profiles.json AND open an ADR."
+}

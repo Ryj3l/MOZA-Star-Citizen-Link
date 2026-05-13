@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  coverlet.runsettings
+  Coverage thresholds per PRP section 12.1.
+  Used by: dotnet test with the runsettings argument referencing this file.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Exclude>
+            [*.Tests]*,[xunit.*]*,[*]*.Migrations.*
+          </Exclude>
+          <ExcludeByAttribute>
+            Obsolete,GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute
+          </ExcludeByAttribute>
+          <SkipAutoProps>true</SkipAutoProps>
+          <DeterministicReport>true</DeterministicReport>
+          <UseSourceLink>true</UseSourceLink>
+
+          <!--
+            Per-assembly thresholds. CI enforces these via the
+            scripts/check-coverage.ps1 script after coverage collection,
+            because coverlet's built-in threshold is a global single value.
+          -->
+          <Threshold>50</Threshold>
+          <ThresholdType>line</ThresholdType>
+          <ThresholdStat>minimum</ThresholdStat>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
