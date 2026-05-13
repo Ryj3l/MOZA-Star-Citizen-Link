@@ -203,6 +203,8 @@ After Stage 2 finishes, before declaring done, the agent runs these checks:
 
 For T-01 through T-04 (where the new solution doesn't fully exist yet) some checks won't apply — the task spec lists exactly which ones do. For T-05 onward, all five should run on every task.
 
+**Coverage gate maturity:** `scripts/check-coverage.ps1` currently runs in `-Mode Baseline` (report-only, exits 0 regardless). The gate is promoted to `-Mode Phase1` at T-20, which enforces PRP §0.3's split (70% on Core/Effects/Fusion/Profiles, 50% on I/O / adapter / UI projects). The `-Mode Final` (post-Phase-1 hand-tuned targets) is reviewed and possibly revised during T-24 docs closeout.
+
 If any applicable check fails, the agent must either fix it or stop and report the failure. The agent does not declare success on a failing verify.
 
 ## Forbidden behavior checklist
