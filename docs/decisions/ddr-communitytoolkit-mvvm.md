@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** CommunityToolkit.Mvvm
-- **Version pinned to:** 8.4.0
+- **Version pinned to:** 8.4.0 (8.4.2 available as patch; no blocker to adopting — defer to next dependency sweep)
 - **Source:** NuGet (https://www.nuget.org/packages/CommunityToolkit.Mvvm)
 - **License (SPDX identifier):** MIT
 - **License-compatible with proprietary distribution:** Yes
@@ -35,8 +35,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

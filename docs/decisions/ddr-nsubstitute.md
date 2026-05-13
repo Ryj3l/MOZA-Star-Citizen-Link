@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** NSubstitute
-- **Version pinned to:** 5.1.x
+- **Version pinned to:** 5.1.0 (5.3.0 available as minor; no breaking changes reported — defer bump to next dependency sweep)
 - **Source:** NuGet
 - **License (SPDX identifier):** BSD-3-Clause
 - **License-compatible with proprietary distribution:** Yes
@@ -34,8 +34,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

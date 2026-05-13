@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** Vortice.DirectInput
-- **Version pinned to:** latest stable (verify at adoption — typically 3.x line as of 2025)
+- **Version pinned to:** 3.6.2 (3.8.3 is latest in 3.x as of 2026-05-13; bump requires re-testing effects on AB6/AB9 hardware — defer to T-07/T-23)
 - **Source:** NuGet (https://www.nuget.org/packages/Vortice.DirectInput)
 - **License (SPDX identifier):** MIT
 - **License-compatible with proprietary distribution:** Yes
@@ -38,8 +38,8 @@ See ADR-0001 for full rationale.
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 

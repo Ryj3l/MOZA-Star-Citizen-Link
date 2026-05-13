@@ -3,7 +3,7 @@
 ## Package
 
 - **Name:** coverlet.collector
-- **Version pinned to:** 6.0.x
+- **Version pinned to:** 6.0.2 (6.0.4 available as patch; no blocker — defer to next dependency sweep)
 - **Source:** NuGet
 - **License (SPDX identifier):** MIT
 - **License-compatible with proprietary distribution:** Yes
@@ -33,8 +33,8 @@
 ## Decision
 
 - **Approved**
-- **Approver:** Senior Architect
-- **Date:** 2026-05-12
+- **Approver:** PENDING OPERATOR REVIEW (initial pre-approval bundle commit via T-05)
+- **Date:** 2026-05-13
 
 ## Validation
 
