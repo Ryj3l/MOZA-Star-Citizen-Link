@@ -1,0 +1,42 @@
+{
+  "$schema": "../Schemas/device-profile.schema.json",
+  "schemaVersion": 1,
+  "profiles": [
+    {
+      "deviceModel": "MozaAb6",
+      "displayName": "MOZA AB6 FFB Base",
+      "productNamePatterns": ["MOZA AB6", "AB6 FFB", "AB6"],
+      "capabilities": {
+        "axisCount": 2,
+        "simultaneousEffectCount": 8,
+        "supportsConstantForce": true,
+        "supportsPeriodic": true,
+        "supportsEnvelope": true,
+        "maxGain": 10000
+      },
+      "safety": {
+        "maxIntensityRecommended": 0.85,
+        "deviceGainMultiplier": 1.0,
+        "notes": "Initial cap until validated on hardware. Refine in T-23."
+      }
+    },
+    {
+      "deviceModel": "MozaAb9",
+      "displayName": "MOZA AB9 FFB Base",
+      "productNamePatterns": ["MOZA AB9", "AB9 FFB", "AB9"],
+      "capabilities": {
+        "axisCount": 2,
+        "simultaneousEffectCount": 8,
+        "supportsConstantForce": true,
+        "supportsPeriodic": true,
+        "supportsEnvelope": true,
+        "maxGain": 10000
+      },
+      "safety": {
+        "maxIntensityRecommended": 0.85,
+        "deviceGainMultiplier": 1.0,
+        "notes": "AB9 has higher rated peak force than AB6; gain multiplier may be reduced after hardware testing if effects feel overstrong at parity intensity."
+      }
+    }
+  ]
+}

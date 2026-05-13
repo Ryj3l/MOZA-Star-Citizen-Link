@@ -1,0 +1,68 @@
+<Project>
+
+  <!--
+    Legacy-project escape hatch.
+    The old single-project codebase at src/MozaStarCitizen.App/MozaStarCitizen.App.csproj
+    has its own assembly attributes and output paths. We must not apply the kit's
+    centralized package management, output redirection, or attribute generation
+    to it; doing so produces CS0579 duplicate-attribute errors.
+
+    This guard is removed in T-02 once the legacy project is deleted.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'MozaStarCitizen.App'">
+    <_SkipKitDirectoryBuildProps>true</_SkipKitDirectoryBuildProps>
+  </PropertyGroup>
+
+  <!--
+    Directory.Build.props
+    Shared MSBuild properties applied to every project in the solution.
+    See PRP §2.1, §3, §12.6.
+  -->
+
+  <PropertyGroup Condition="'$(_SkipKitDirectoryBuildProps)' != 'true'">
+    <!-- Language and runtime -->
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningLevel>5</WarningLevel>
+    <AnalysisLevel>latest-Recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Determinism and reproducibility -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!-- Suppress noisy warnings that aren't actionable in this codebase -->
+    <NoWarn>$(NoWarn);CA1014</NoWarn> <!-- CLSCompliant: not relevant for Windows-only app -->
+
+    <!-- Versioning -->
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <InformationalVersion>0.1.0-alpha+$(GITHUB_SHA)</InformationalVersion>
+
+    <!-- Product metadata -->
+    <Product>MOZA Star Citizen Link</Product>
+    <Company>(unset — pending MOZA partnership decision)</Company>
+    <Copyright>© 2026</Copyright>
+
+    <!-- Output and intermediate folders kept out of source tree -->
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)artifacts\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)artifacts\bin\$(MSBuildProjectName)\</BaseOutputPath>
+  </PropertyGroup>
+
+  <!-- Apply forbidden-API analyzer to every project -->
+  <ItemGroup Condition="'$(_SkipKitDirectoryBuildProps)' != 'true'">
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="Exists('$(MSBuildThisFileDirectory)BannedSymbols.txt')" />
+  </ItemGroup>
+
+  <!-- Source link for stack traces in crash dumps -->
+  <PropertyGroup Condition="'$(_SkipKitDirectoryBuildProps)' != 'true'">
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+</Project>

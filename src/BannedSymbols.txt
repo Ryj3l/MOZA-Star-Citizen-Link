@@ -1,0 +1,52 @@
+# BannedSymbols.txt
+# Used by Microsoft.CodeAnalysis.BannedApiAnalyzers.
+# Format: T:<TypeName>;<Reason> or M:<MethodName>;<Reason> or N:<Namespace>;<Reason>
+#
+# These rules enforce PRP §13.3 (Critical Guardrails) at compile time.
+# Adding to this list is a one-way ratchet — removals require an ADR.
+
+# ============================================================
+# SharpDX is deprecated and explicitly forbidden by PRP §2.3.
+# ============================================================
+N:SharpDX;Use Vortice.DirectInput instead. See PRP §2.3 and ADR-0001.
+
+# ============================================================
+# Process memory inspection / injection APIs.
+# Any of these would put us in EAC-adjacent territory.
+# See PRP §13.3.
+# ============================================================
+M:Microsoft.Win32.SafeHandles.SafeProcessHandle.#ctor(System.IntPtr,System.Boolean);Forbidden process handle construction; this product does not inspect other processes.
+M:System.Diagnostics.Process.Modules.get;Forbidden: inspecting another process's modules approaches anti-cheat-adjacent behavior. If needed for diagnostics, file an ADR.
+
+# Direct Win32 process APIs via P/Invoke are caught by the custom Roslyn analyzer
+# (see scripts/forbidden-api-scan.ps1) because banned-API analyzer only sees
+# managed surface. Patterns: OpenProcess, ReadProcessMemory, WriteProcessMemory,
+# VirtualAllocEx, CreateRemoteThread, NtCreateThreadEx, NtOpenProcess.
+
+# ============================================================
+# Memory mapping into other processes.
+# ============================================================
+M:System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting(System.String);Allowed for our own IPC only; flag in code review.
+
+# ============================================================
+# Kernel-level / driver APIs.
+# ============================================================
+# Caught by the custom forbidden-API scanner: anything in nt*, ZwOpen*, IoCreate*.
+
+# ============================================================
+# Unsafe gain defaults.
+# ============================================================
+# Hard limits live in code (SafetyLimits.cs). The analyzer cannot enforce
+# numeric defaults; this is enforced by unit test
+# Moza.ScLink.Effects.Tests.SafetyLimitsTests.
+
+# ============================================================
+# JSON: prefer System.Text.Json over Newtonsoft.Json per PRP §2.9.
+# ============================================================
+N:Newtonsoft.Json;Use System.Text.Json instead. PRP §2.9.
+
+# ============================================================
+# Deprecated test framework features.
+# ============================================================
+T:Xunit.FactAttribute;BLOCK:Not actually banned — placeholder showing format.
+# Replace ":BLOCK:..." with real content if a future ban is needed.

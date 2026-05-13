@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build-and-test:
+    name: Build, test, and gate
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for source link
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/Directory.Packages.props', '**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore MozaStarCitizenLink.sln
+
+      - name: Build (Release, warnings-as-errors)
+        run: >
+          dotnet build MozaStarCitizenLink.sln
+          --configuration Release
+          --no-restore
+          /p:TreatWarningsAsErrors=true
+          /p:WarningLevel=5
+
+      - name: Test (with coverage)
+        run: >
+          dotnet test MozaStarCitizenLink.sln
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --logger "console;verbosity=normal"
+          --collect:"XPlat Code Coverage"
+          --results-directory ./TestResults
+          --settings src/coverlet.runsettings
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ./TestResults/**/*.trx
+
+      - name: Check per-project coverage thresholds
+        shell: pwsh
+        run: ./scripts/check-coverage.ps1 -ResultsPath ./TestResults
+
+      - name: Forbidden-API scan
+        shell: pwsh
+        run: ./scripts/forbidden-api-scan.ps1
+
+      - name: DDR completeness check
+        shell: pwsh
+        run: ./scripts/check-ddr-completeness.ps1
+
+      - name: Pattern lint (regex validity + sample-corpus regression)
+        shell: pwsh
+        run: ./scripts/validate-patterns.ps1
+        continue-on-error: true  # Phase 1: patterns are placeholders; tighten in Phase 2
+
+      - name: Upload coverage to artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ./TestResults/**/coverage.cobertura.xml
+
+  publish-preview:
+    name: Build portable preview (PR only)
+    runs-on: windows-latest
+    needs: build-and-test
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish portable
+        shell: pwsh
+        run: ./scripts/package-portable.ps1 -Configuration Release
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MozaStarCitizen-preview-pr-${{ github.event.pull_request.number }}
+          path: artifacts/*.zip

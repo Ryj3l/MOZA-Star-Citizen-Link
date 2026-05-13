@@ -1,12 +1,120 @@
-.idea
-CLAUDE.md
-GEMINI.md
-AGENTS.md
-
+# =============================================================================
+# .NET build outputs
+# =============================================================================
 bin/
 obj/
+out/
 artifacts/
-third_party/moza-sdk/sdk-local/
 *.user
 *.suo
-*.pdb
+*.userprefs
+*.sln.docstates
+.vs/
+
+# =============================================================================
+# Test results
+# =============================================================================
+TestResults/
+**/coverage.cobertura.xml
+**/coverage.opencover.xml
+coverage/
+*.coverage
+*.coveragexml
+*.trx
+
+# =============================================================================
+# Publish outputs
+# =============================================================================
+publish/
+*.zip
+
+# =============================================================================
+# IDE
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# =============================================================================
+# Windows / OS noise
+# =============================================================================
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# =============================================================================
+# Logs
+# =============================================================================
+*.log
+logs/
+
+# =============================================================================
+# Third-party SDKs that may be placed locally but never committed
+# =============================================================================
+third_party/moza-sdk/sdk-local/
+drivers/moza-sdk/
+
+# =============================================================================
+# Replay harness bundles (development-only; see docs/PRP-ADDENDUM-replay-harness.md)
+# Rich bundles contain raw audio (.wav) and screen-ROI video — must never be committed.
+# Stripped bundles intended as test fixtures live under tools/Moza.ScLink.Replay.Tests/Fixtures/
+# and are tracked normally; the ignore below excludes only the recordings directory.
+# =============================================================================
+tools/recordings/
+tools/Moza.ScLink.Replay/bin/
+tools/Moza.ScLink.Replay/obj/
+tools/Moza.ScLink.Replay.Tests/bin/
+tools/Moza.ScLink.Replay.Tests/obj/
+
+# =============================================================================
+# Local agent notes — never commit
+# =============================================================================
+CLAUDE.local.md
+GEMINI.md
+AGENTS.md
+.aider*
+.cursor/
+
+# =============================================================================
+# Framework artifacts we explicitly do NOT install (see docs/AGENTIC_EXECUTION_RUNBOOK.md)
+# These are listed defensively so if any tool accidentally creates them, they
+# stay out of git.
+# =============================================================================
+.smith/
+.specify/
+constitution.md
+PROJECT.md
+REQUIREMENTS.md
+ROADMAP.md
+STATE.md
+CONTEXT.md
+spec.md
+plan.md
+tasks.md
+specs/
+
+# =============================================================================
+# Environment files (never commit)
+# =============================================================================
+.env
+.env.*
+!.env.example
+
+# =============================================================================
+# NuGet
+# =============================================================================
+*.nupkg
+*.snupkg
+.nuget/
+packages/
+
+# =============================================================================
+# Visual Studio
+# =============================================================================
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.opendb
