@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Windows;
 using System.Windows.Interop;
 using Microsoft.Extensions.Logging;
@@ -32,6 +33,17 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
     private DeviceState _state = DeviceState.Disconnected;
     private DeviceCapabilities? _capabilities;
     private bool _disposed;
+
+    // Effect cache (T-07 M7). Values are stored raw — NOT Lazy<T>-wrapped. Lazy<T> in its default
+    // ExecutionAndPublication mode caches the factory's exception, which would break the M9 retry loop's
+    // ability to re-attempt CreateEffect after a NeedsReacquire / NeedsRedownload. The M8 GetOrAdd race is
+    // instead handled by the atomic value-overload GetOrAdd + a !ReferenceEquals dispose-loser check.
+    private readonly ConcurrentDictionary<DeviceCacheKey, IDirectInputEffectAbstraction> _effectCache = new();
+
+    // Index of currently-active sustained effects by StateKey. Declared in M7; populated by HandlePlayAsync
+    // in M8. Every entry is also an _effectCache entry (active effects are taken from the cache), so
+    // DisposeAsync disposes via _effectCache and only clears this index.
+    private readonly ConcurrentDictionary<string, IDirectInputEffectAbstraction> _activeByStateKey = new();
 
     /// <summary>
     /// Constructs the device against an abstraction seam and a classified <see cref="DirectInputDeviceIdentity"/>.
@@ -150,10 +162,11 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
     /// <inheritdoc />
     /// <remarks>
-    /// Disposes the underlying adapter and transitions to <see cref="DeviceState.Disconnected"/> as the
-    /// terminal state so post-dispose <see cref="State"/> reads remain coherent. The <see cref="StateChanged"/>
-    /// event fires one last time on the way down. Relies on <see cref="VorticeDirectInputDeviceAdapter.Dispose"/>'s
-    /// own narrow <see cref="SharpGen.Runtime.SharpGenException"/> swallow — no defensive double-swallow here.
+    /// Disposes every cached effect, then the underlying device adapter, then transitions to
+    /// <see cref="DeviceState.Disconnected"/> as the terminal state so post-dispose <see cref="State"/> reads
+    /// remain coherent. The <see cref="StateChanged"/> event fires one last time on the way down. Relies on
+    /// the adapters' own narrow <see cref="SharpGen.Runtime.SharpGenException"/> swallow — no defensive
+    /// double-swallow here.
     /// </remarks>
     public ValueTask DisposeAsync()
     {
@@ -161,6 +174,16 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
         {
             return ValueTask.CompletedTask;
         }
+
+        foreach (var effect in _effectCache.Values)
+        {
+            // No per-effect try/catch: VorticeDirectInputEffectAdapter.Dispose swallows SharpGenException
+            // narrowly around its risky pre-dispose Stop() call — no double-swallow here (M5 pattern).
+            effect.Dispose();
+        }
+
+        _effectCache.Clear();
+        _activeByStateKey.Clear();
 
         _device?.Dispose();
         _device = null;
@@ -318,5 +341,57 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
         }
 
         return (int)Math.Clamp(duration.TotalMilliseconds * 1000.0, 1.0, int.MaxValue);
+    }
+
+    // ── Effect cache key (T-07 M7) ───────────────────────────────────────────────────────────
+    // ComputeCacheKey deliberately uses different rounding math than BuildEffectParameters above:
+    // the cache key mirrors the legacy DirectInputForceFeedbackDevice.GetCacheKey (3-decimal rounding,
+    // expressed as x1000 integers), while BuildEffectParameters uses device-unit math. The legacy
+    // GetCacheKey and the legacy effect-param builders were always separate functions with different
+    // rounding — this is legacy-faithful, not a coherence bug. Do not "unify" them.
+
+    /// <summary>
+    /// Composite cache key for the effect cache. Shape per PRP §15 (catalog-identity key): two plays of the
+    /// same catalog effect at the same rounded parameters share one downloaded DirectInput effect. Mirrors
+    /// the legacy <c>DirectInputForceFeedbackDevice.GetCacheKey</c> composite (CLAUDE.md hard-rule #6 —
+    /// preserve PRP §14.2 effect-cache composite keying). Direction is intentionally not in the key: in T-07
+    /// it is always <c>(1,1)</c> (the only caller passes <c>0,0</c>), and <see cref="EffectId"/> already
+    /// pins a catalog effect with a fixed direction. T-14 revisits if its resolver introduces varying
+    /// directions. This shape resolves the PRP §15 vs T-07.md cache-key contradiction flagged by the T-07 plan.
+    /// </summary>
+    /// <param name="EffectId">Catalog identity (<see cref="ForceEffect.EffectId"/>); legacy <c>Name</c>.</param>
+    /// <param name="EffectType">Catalog effect-type discrimination; legacy <c>Kind</c>.</param>
+    /// <param name="IntensityRoundedThousandths">Final intensity clamped to [0,1], x1000, rounded to nearest int.</param>
+    /// <param name="DurationMilliseconds">Effect duration in whole milliseconds, clamped to [0, <see cref="int.MaxValue"/>].</param>
+    /// <param name="FrequencyRoundedThousandths">Frequency in Hz, x1000, rounded to nearest int.</param>
+    /// <param name="StateKey">The effect's state key, or the empty string when it has none.</param>
+    internal readonly record struct DeviceCacheKey(
+        string EffectId,
+        ForceEffectType EffectType,
+        int IntensityRoundedThousandths,
+        int DurationMilliseconds,
+        int FrequencyRoundedThousandths,
+        string StateKey);
+
+    /// <summary>
+    /// Computes the <see cref="DeviceCacheKey"/> for an effect at its gain-resolved final intensity. Pure
+    /// function — no device interaction. Rounding precision (3 decimals, expressed as x1000 integers)
+    /// mirrors the legacy <c>GetCacheKey</c>. Exercised directly by the M7 cache tests and, from M8, by
+    /// <c>HandlePlayAsync</c>.
+    /// </summary>
+    /// <param name="effect">The catalog effect descriptor.</param>
+    /// <param name="finalIntensity">Gain-stack-resolved intensity in [0.0, 1.0] (from <c>PlayEffectCommand.FinalIntensity</c>).</param>
+    /// <exception cref="ArgumentNullException"><paramref name="effect"/> is <see langword="null"/>.</exception>
+    internal static DeviceCacheKey ComputeCacheKey(ForceEffect effect, double finalIntensity)
+    {
+        ArgumentNullException.ThrowIfNull(effect);
+
+        return new DeviceCacheKey(
+            EffectId: effect.EffectId,
+            EffectType: effect.EffectType,
+            IntensityRoundedThousandths: (int)Math.Round(Math.Clamp(finalIntensity, 0.0, 1.0) * 1000.0),
+            DurationMilliseconds: (int)Math.Clamp(effect.Duration.TotalMilliseconds, 0.0, int.MaxValue),
+            FrequencyRoundedThousandths: (int)Math.Round(effect.FrequencyHz * 1000.0),
+            StateKey: effect.StateKey ?? string.Empty);
     }
 }

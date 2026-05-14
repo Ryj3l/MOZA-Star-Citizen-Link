@@ -3,18 +3,22 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moza.ScLink.Core.Models;
 using NSubstitute;
+// Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect — same alias the
+// production VorticeDirectInputDevice.cs uses; both die when the legacy Models.ForceEffect is removed.
+using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
 
 namespace Moza.ScLink.DirectInput.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="VorticeDirectInputDevice"/>. Covers the M5 constructor guards (plan §H tests
-/// 8/9/10 plus three null-argument guards) and the M6 <see cref="VorticeDirectInputDevice.ScaleDirection"/>
-/// helper (plan §H tests 11–16).
+/// 8/9/10 plus three null-argument guards), the M6 <see cref="VorticeDirectInputDevice.ScaleDirection"/>
+/// helper (plan §H tests 11–16), and the M7 <see cref="VorticeDirectInputDevice.ComputeCacheKey"/> /
+/// <see cref="VorticeDirectInputDevice.DeviceCacheKey"/> cache-key semantics.
 /// </summary>
 /// <remarks>
-/// Behavioral coverage of <c>InitializeAsync</c>, <c>ExecuteAsync</c>, the dual-dictionary effect cache, and
-/// the re-acquire / re-download retry loop lands in M7–M9. Each milestone adds its surface to this file with
-/// its own per-milestone hand-review pause.
+/// Behavioral coverage of <c>InitializeAsync</c>, <c>ExecuteAsync</c>, and the re-acquire / re-download
+/// retry loop lands in M8–M9. Each milestone adds its surface to this file with its own per-milestone
+/// hand-review pause.
 /// </remarks>
 public sealed class VorticeDirectInputDeviceTests
 {
@@ -159,5 +163,78 @@ public sealed class VorticeDirectInputDeviceTests
 
         x.Should().Be(-5000);
         y.Should().Be(-2500);
+    }
+
+    // ── ComputeCacheKey / DeviceCacheKey (plan §K M7 cache-key semantics) ─────────────────────
+
+    private static ForceEffect AnEffect(
+        string effectId = "fx.test",
+        ForceEffectType effectType = ForceEffectType.Periodic,
+        double frequencyHz = 40.0,
+        TimeSpan? duration = null,
+        string? stateKey = null) => new()
+    {
+        EffectId = effectId,
+        EffectType = effectType,
+        Category = EffectCategory.Flight,
+        FrequencyHz = frequencyHz,
+        Duration = duration ?? TimeSpan.FromMilliseconds(250),
+        StateKey = stateKey,
+    };
+
+    [Fact]
+    public void DeviceCacheKeyEqualsReturnsTrueForIdenticalKeys()
+    {
+        var a = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(), 0.5);
+        var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(), 0.5);
+
+        a.Should().Be(b);
+    }
+
+    [Fact]
+    public void DeviceCacheKeyEqualsReturnsFalseForDifferentEffectIds()
+    {
+        var a = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(effectId: "fx.one"), 0.5);
+        var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(effectId: "fx.two"), 0.5);
+
+        a.Should().NotBe(b);
+    }
+
+    [Fact]
+    public void DeviceCacheKeyEqualsReturnsFalseForDifferentIntensityAtRoundedPrecision()
+    {
+        var a = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(), 0.5);
+        var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(), 0.6);
+
+        a.Should().NotBe(b);
+    }
+
+    [Fact]
+    public void DeviceCacheKeyEqualsReturnsTrueForIntensitiesIdenticalAtRoundedPrecision()
+    {
+        // 0.5001 * 1000 = 500.1 and 0.5002 * 1000 = 500.2 both round to 500 thousandths.
+        var a = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(), 0.5001);
+        var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(), 0.5002);
+
+        a.Should().Be(b);
+    }
+
+    [Fact]
+    public void DeviceCacheKeyEqualsReturnsTrueForFrequenciesIdenticalAtRoundedPrecision()
+    {
+        // 30.0001 * 1000 = 30000.1 and 30.0002 * 1000 = 30000.2 both round to 30000 thousandths.
+        var a = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(frequencyHz: 30.0001), 0.5);
+        var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(frequencyHz: 30.0002), 0.5);
+
+        a.Should().Be(b);
+    }
+
+    [Fact]
+    public void DeviceCacheKeyEqualsTreatsNullAndEmptyStateKeyIdentically()
+    {
+        var a = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(stateKey: null), 0.5);
+        var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(stateKey: string.Empty), 0.5);
+
+        a.Should().Be(b);
     }
 }
