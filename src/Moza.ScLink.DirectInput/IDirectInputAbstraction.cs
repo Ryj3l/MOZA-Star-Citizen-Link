@@ -101,9 +101,9 @@ public interface IDirectInputDeviceAbstraction : IDisposable
 /// </summary>
 /// <remarks>
 /// T-07.md's spec sample (deliverable 1) omitted <see cref="Download"/> and <see cref="Unload"/>, but the
-/// legacy <c>DirectInputForceFeedbackDevice</c> calls both explicitly (lines 281, 342, 367–377, 437). They
-/// are required to preserve the behaviors in PRP §14.2 — re-downloading after the device re-acquires,
-/// and unloading on dispose so the device's effect-slot count does not grow.
+/// legacy <c>DirectInputForceFeedbackDevice</c> called both explicitly (see commit c62aaf2; M12 deleted the
+/// legacy COM-interop files). They are required to preserve the behaviors in PRP §14.2 — re-downloading
+/// after the device re-acquires, and unloading on dispose so the device's effect-slot count does not grow.
 /// </remarks>
 public interface IDirectInputEffectAbstraction : IDisposable
 {
