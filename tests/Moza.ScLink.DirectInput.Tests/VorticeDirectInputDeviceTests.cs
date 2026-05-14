@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 using NSubstitute;
+using SharpGen.Runtime;
 using Vortice.DirectInput;
 // Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect — same alias the
 // production VorticeDirectInputDevice.cs uses; both die when the legacy Models.ForceEffect is removed.
@@ -267,10 +268,13 @@ public sealed class VorticeDirectInputDeviceTests
 
     // Builds a VorticeDirectInputDevice already driven through InitializeAsync against fully-mocked
     // abstractions. CreateEffect returns a fresh effect mock per call by default; tests that need to hold
-    // a reference override with an explicit .Returns(...).
+    // a reference override with an explicit .Returns(...). delayStrategy defaults to an immediate no-op so
+    // M9 retry tests never incur real Task.Delay waits; logger defaults to NullLogger.
     private static async Task<(VorticeDirectInputDevice Sut,
                                IDirectInputAbstraction Abstraction,
-                               IDirectInputDeviceAbstraction Device)> AnInitializedSutAsync()
+                               IDirectInputDeviceAbstraction Device)> AnInitializedSutAsync(
+        Func<int, CancellationToken, Task>? delayStrategy = null,
+        ILogger<VorticeDirectInputDevice>? logger = null)
     {
         var abstraction = Substitute.For<IDirectInputAbstraction>();
         var device = Substitute.For<IDirectInputDeviceAbstraction>();
@@ -278,7 +282,11 @@ public sealed class VorticeDirectInputDeviceTests
         device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>())
             .Returns(_ => Substitute.For<IDirectInputEffectAbstraction>());
 
-        var sut = new VorticeDirectInputDevice(abstraction, AnAb6Identity(), ALogger());
+        var sut = new VorticeDirectInputDevice(
+            abstraction,
+            AnAb6Identity(),
+            logger ?? ALogger(),
+            delayStrategy ?? ((_, _) => Task.CompletedTask));
         await sut.InitializeAsync(CancellationToken.None);
         return (sut, abstraction, device);
     }
@@ -468,5 +476,315 @@ public sealed class VorticeDirectInputDeviceTests
 
         (await act.Should().ThrowAsync<ArgumentNullException>())
             .Which.ParamName.Should().Be("command");
+    }
+
+    // ── M9 re-acquire / re-download / transient retry loop (plan §H tests 3/4/5 + support) ────
+
+    // HRESULT constants mirror DirectInputErrorClassifier's internal HResults (re-stated here so the test
+    // project needs no InternalsVisibleTo). 0x80040205 = DIERR_NOTEXCLUSIVEACQUIRED (NeedsReacquire),
+    // 0x80040203 = DIERR_NOTDOWNLOADED (NeedsRedownload), 0x80040208 = DIERR_EFFECTPLAYING (Transient).
+    private const int HrNotExclusiveAcquired = unchecked((int)0x80040205);
+    private const int HrNotDownloaded = unchecked((int)0x80040203);
+    private const int HrEffectPlaying = unchecked((int)0x80040208);
+
+    private static SharpGenException ASharpGenException(int hresult, string message = "DI test failure") =>
+        new(new Result(hresult), message, innerException: null);
+
+    // Minimal ILogger that records the level of every entry — lets GivesUpAfterThreeReacquireAttempts
+    // assert "exactly one Warning-level log entry" (§H test 5) without an NSubstitute open-generic dance.
+    private sealed class RecordingLogger : ILogger<VorticeDirectInputDevice>
+    {
+        public List<LogLevel> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => Entries.Add(logLevel);
+    }
+
+    [Fact]
+    public async Task ReacquiresOnDirectInputNotExclusiveAcquired()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var startCalls = 0;
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ =>
+            {
+                startCalls++;
+                if (startCalls == 1)
+                {
+                    throw ASharpGenException(HrNotExclusiveAcquired);
+                }
+            });
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        device.Received(1).Unacquire();   // only the M9 reacquire path calls Unacquire()
+        startCalls.Should().Be(2);        // initial throw + successful retry
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task RedownloadsOnDirectInputNotDownloaded()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var startCalls = 0;
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ =>
+            {
+                startCalls++;
+                if (startCalls == 1)
+                {
+                    throw ASharpGenException(HrNotDownloaded);
+                }
+            });
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        effectMock.Received(1).Download();   // redownload path called Download() once
+        startCalls.Should().Be(2);           // initial throw + successful retry
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+        device.Received(1).CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>());   // no re-create
+    }
+
+    [Fact]
+    public async Task GivesUpAfterThreeReacquireAttempts()
+    {
+        var delays = new List<int>();
+        Func<int, CancellationToken, Task> recorder = (ms, _) =>
+        {
+            delays.Add(ms);
+            return Task.CompletedTask;
+        };
+        var recordingLogger = new RecordingLogger();
+
+        var (sut, _, device) = await AnInitializedSutAsync(recorder, recordingLogger);
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ => throw ASharpGenException(HrNotExclusiveAcquired));   // every Start throws
+
+        var act = async () => await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();                      // M9 contract: logs Warning, returns
+        delays.Should().Equal(50, 200, 500);                     // exactly 3 attempts, backoff sequence
+        device.Received(3).Unacquire();                          // 3 reacquire pairs
+        effectMock.Received(4).Start(1, EffectPlayFlags.None);   // initial + 3 re-issues
+        recordingLogger.Entries.Count(level => level == LogLevel.Warning).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReacquireBudgetIsIndependentOfRedownloadBudget()
+    {
+        var delays = new List<int>();
+        Func<int, CancellationToken, Task> recorder = (ms, _) =>
+        {
+            delays.Add(ms);
+            return Task.CompletedTask;
+        };
+
+        var (sut, _, device) = await AnInitializedSutAsync(recorder);
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var startCalls = 0;
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ =>
+            {
+                startCalls++;
+                // Call 1: NeedsRedownload (spends the one redownload bite). Calls 2+: NeedsReacquire
+                // forever — must still get the full, independent 3-attempt reacquire budget.
+                throw startCalls == 1
+                    ? ASharpGenException(HrNotDownloaded)
+                    : ASharpGenException(HrNotExclusiveAcquired);
+            });
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        effectMock.Received(1).Download();      // redownload bite ran once
+        delays.Should().Equal(50, 200, 500);    // reacquire still got its full, independent 3
+        device.Received(3).Unacquire();
+        // 1 redownload re-issue + 4 reacquire-phase issues (3 that delay + 1 that hits exhaustion).
+        effectMock.Received(5).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task TransientFailureRetriesOnceImmediately()
+    {
+        var delays = new List<int>();
+        Func<int, CancellationToken, Task> recorder = (ms, _) =>
+        {
+            delays.Add(ms);
+            return Task.CompletedTask;
+        };
+
+        var (sut, _, device) = await AnInitializedSutAsync(recorder);
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var startCalls = 0;
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ =>
+            {
+                startCalls++;
+                if (startCalls == 1)
+                {
+                    throw ASharpGenException(HrEffectPlaying);
+                }
+            });
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        startCalls.Should().Be(2);
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+        delays.Should().BeEmpty();              // transient path does NOT touch _delayStrategy
+        device.DidNotReceive().Unacquire();     // transient path does NOT re-acquire
+    }
+
+    [Fact]
+    public async Task TransientFailureGivesUpAfterOneRetry()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ => throw ASharpGenException(HrEffectPlaying));   // every Start throws Transient
+
+        var act = async () => await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        // Initial attempt + exactly one transient retry, then the transientTried guard exhausts the path.
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task RedownloadGivesUpAfterOneRetry()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ => throw ASharpGenException(HrNotDownloaded));   // every Start throws NeedsRedownload
+
+        var act = async () => await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        // Initial attempt + one redownload retry, then the redownloadTried guard exhausts the path.
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+        effectMock.Received(1).Download();
+    }
+
+    [Fact]
+    public async Task RedownloadActionFailureContinuesRetryLoop()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var startCalls = 0;
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ =>
+            {
+                startCalls++;
+                if (startCalls == 1)
+                {
+                    throw ASharpGenException(HrNotDownloaded);
+                }
+            });
+        // The Download() recovery action itself throws — the wrapper catches it (it does not classify
+        // recovery-action failures), logs RedownloadCallThrew, and continues the loop.
+        effectMock
+            .When(e => e.Download())
+            .Do(_ => throw ASharpGenException(HrNotExclusiveAcquired));
+
+        var act = async () => await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();                      // Download() failure does not propagate
+        effectMock.Received(1).Download();                       // recovery action attempted once
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);   // initial throw + successful retry
+    }
+
+    [Fact]
+    public async Task FatalFailureIsLoggedAndDoesNotThrow()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        // 0x80004005 = E_FAIL — not a DIERR_* the classifier recognizes => DirectInputErrorClass.Fatal.
+        effectMock
+            .When(e => e.Start(Arg.Any<int>(), Arg.Any<EffectPlayFlags>()))
+            .Do(_ => throw ASharpGenException(unchecked((int)0x80004005)));
+
+        var act = async () => await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();                      // Fatal logged + swallowed, never thrown
+        effectMock.Received(1).Start(1, EffectPlayFlags.None);   // no retry on Fatal
+        device.DidNotReceive().Unacquire();
+    }
+
+    [Fact]
+    public async Task CreateEffectExhaustionLeavesEffectUncachedAndDoesNotThrow()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+
+        var createCalls = 0;
+        device
+            .When(d => d.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()))
+            .Do(_ =>
+            {
+                createCalls++;
+                throw ASharpGenException(HrNotExclusiveAcquired);   // always NeedsReacquire => exhausts
+            });
+
+        var effect = AnEffect();
+        var act = async () => await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();   // wrapper exhausted CreateEffect, logged Warning, returned
+        createCalls.Should().Be(4);           // initial + 3 reacquire re-issues, then gave up
+
+        // A second identical play must re-attempt CreateEffect — proof no null was published into the
+        // cache (a cached null would NRE or be returned as a hit, skipping CreateEffect entirely).
+        await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+        createCalls.Should().Be(8);           // another full 4-attempt round, not a cache hit
+    }
+
+    [Fact]
+    public async Task SuccessfulPlayDoesNotReacquireOrRetry()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        device.Received(1).CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>());
+        effectMock.Received(1).Start(1, EffectPlayFlags.None);
+        effectMock.DidNotReceive().Download();
+        device.DidNotReceive().Unacquire();
     }
 }

@@ -29,6 +29,11 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
     private readonly IDirectInputAbstraction _abstraction;
     private readonly DirectInputDeviceIdentity _identity;
     private readonly ILogger<VorticeDirectInputDevice> _logger;
+
+    // M9 retry-loop backoff seam. Production default is Task.Delay; tests inject a no-op or a recording
+    // strategy so the re-acquire backoff (50/200/500 ms) is exercised without real wall-clock waits.
+    private readonly Func<int, CancellationToken, Task> _delayStrategy;
+
     private IDirectInputDeviceAbstraction? _device;
     private DeviceState _state = DeviceState.Disconnected;
     private DeviceCapabilities? _capabilities;
@@ -52,12 +57,20 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
     /// <param name="abstraction">Production DirectInput abstraction or a test seam.</param>
     /// <param name="identity">Pre-classified device identity from the factory call-site.</param>
     /// <param name="logger">Serilog-bridged logger; used by M5–M9 for cache-hit/miss, re-acquire, and lifecycle traces.</param>
-    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    /// <param name="delayStrategy">
+    /// M9 re-acquire backoff seam: receives a delay in milliseconds and the operation's
+    /// <see cref="CancellationToken"/>, returns a <see cref="Task"/> that completes when the delay elapses.
+    /// <see langword="null"/> (the default) installs the production strategy <c>Task.Delay(ms, ct)</c>;
+    /// tests inject a no-op or a recording strategy. <see langword="null"/> is the documented "use
+    /// production default" sentinel — not a misuse — so it is intentionally not <c>ThrowIfNull</c>-guarded.
+    /// </param>
+    /// <exception cref="ArgumentNullException">Any argument except <paramref name="delayStrategy"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="identity"/>'s <see cref="DirectInputDeviceIdentity.Model"/> is <see cref="DeviceModel.Unknown"/>.</exception>
     public VorticeDirectInputDevice(
         IDirectInputAbstraction abstraction,
         DirectInputDeviceIdentity identity,
-        ILogger<VorticeDirectInputDevice> logger)
+        ILogger<VorticeDirectInputDevice> logger,
+        Func<int, CancellationToken, Task>? delayStrategy = null)
     {
         ArgumentNullException.ThrowIfNull(abstraction);
         ArgumentNullException.ThrowIfNull(identity);
@@ -72,6 +85,7 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
         _abstraction = abstraction;
         _identity = identity;
         _logger = logger;
+        _delayStrategy = delayStrategy ?? ((ms, ct) => Task.Delay(ms, ct));
     }
 
     /// <inheritdoc />
@@ -195,13 +209,68 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         public static void StopAllEffectFailed(ILogger logger, string stateKey, Exception exception)
             => _stopAllEffectFailed(logger, stateKey, exception);
+
+        private static readonly Action<ILogger, string, string, Exception?> _retryPathExhausted =
+            LoggerMessage.Define<string, string>(
+                LogLevel.Warning,
+                new EventId(7, nameof(RetryPathExhausted)),
+                "DI retry exhausted for {Operation} ({Reason}); effect not played");
+
+        public static void RetryPathExhausted(ILogger logger, string operation, string reason, Exception? exception)
+            => _retryPathExhausted(logger, operation, reason, exception);
+
+        private static readonly Action<ILogger, string, string, int, Exception?> _retryAttempt =
+            LoggerMessage.Define<string, string, int>(
+                LogLevel.Debug,
+                new EventId(8, nameof(RetryAttempt)),
+                "DI retry for {Operation} ({Reason}); delay {DelayMs}ms");
+
+        public static void RetryAttempt(ILogger logger, string operation, string reason, int delayMs)
+            => _retryAttempt(logger, operation, reason, delayMs, null);
+
+        private static readonly Action<ILogger, string, Exception?> _reacquireCallThrew =
+            LoggerMessage.Define<string>(
+                LogLevel.Debug,
+                new EventId(9, nameof(ReacquireCallThrew)),
+                "DI Unacquire/Acquire itself threw for {Operation}; continuing retry loop");
+
+        public static void ReacquireCallThrew(ILogger logger, string operation, Exception exception)
+            => _reacquireCallThrew(logger, operation, exception);
+
+        private static readonly Action<ILogger, string, string, Exception?> _retryPathRecovered =
+            LoggerMessage.Define<string, string>(
+                LogLevel.Debug,
+                new EventId(10, nameof(RetryPathRecovered)),
+                "DI {Operation} recovered after retry ({Reason})");
+
+        public static void RetryPathRecovered(ILogger logger, string operation, string reason)
+            => _retryPathRecovered(logger, operation, reason, null);
+
+        private static readonly Action<ILogger, string, Exception?> _redownloadCallThrew =
+            LoggerMessage.Define<string>(
+                LogLevel.Debug,
+                new EventId(11, nameof(RedownloadCallThrew)),
+                "DI Download() itself threw for {Operation}; continuing retry loop");
+
+        public static void RedownloadCallThrew(ILogger logger, string operation, Exception exception)
+            => _redownloadCallThrew(logger, operation, exception);
     }
 
     /// <inheritdoc />
     /// <remarks>
-    /// M8 dispatch: routes <see cref="PlayEffectCommand"/> / <see cref="StopEffectCommand"/> /
-    /// <see cref="StopAllCommand"/> to their handlers. Pure dispatch — on a transient DirectInput failure
-    /// the classified exception propagates to the caller; the re-acquire / re-download retry loop is M9.
+    /// Dispatch: routes <see cref="PlayEffectCommand"/> / <see cref="StopEffectCommand"/> /
+    /// <see cref="StopAllCommand"/> to their handlers.
+    /// <para/>
+    /// M9 contract — the returned <see cref="Task"/> <b>always completes successfully</b> on a classified,
+    /// recoverable DirectInput failure (<see cref="DirectInputErrorClass.NeedsReacquire"/> /
+    /// <see cref="DirectInputErrorClass.NeedsRedownload"/> / <see cref="DirectInputErrorClass.Transient"/>),
+    /// including the retry-exhaustion and <see cref="DirectInputErrorClass.Fatal"/> cases: the retry
+    /// wrapper logs a Warning and returns rather than throwing. Such failures are observable only via
+    /// Warning-level logs ("effect not played"), never as a faulted Task. Non-classified exceptions
+    /// (<see cref="ArgumentNullException"/>, <see cref="InvalidOperationException"/>,
+    /// <see cref="ObjectDisposedException"/>, <see cref="OperationCanceledException"/> from a cancelled
+    /// backoff delay, etc.) still propagate and fault the Task. The Stop paths are deliberately not routed
+    /// through the retry wrapper — emergency stop is fast-fail-fast.
     /// </remarks>
     public Task ExecuteAsync(ForceCommand command, CancellationToken cancellationToken)
     {
@@ -232,10 +301,12 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
     /// <summary>
     /// Resolves (cache-or-create) and starts the effect for a <see cref="PlayEffectCommand"/>. On a
-    /// <see cref="ForceEffect.StateKey"/> collision the prior active effect is stopped and replaced. M8
-    /// calls <c>CreateEffect</c> / <c>Start</c> directly; M9 routes them through the re-acquire retry loop.
+    /// <see cref="ForceEffect.StateKey"/> collision the prior active effect is stopped and replaced. The
+    /// <c>CreateEffect</c> and <c>Start</c> device calls are routed through
+    /// <see cref="ExecuteWithReacquireAsync"/> (M9 re-acquire / re-download / transient retry); the
+    /// prior-effect <c>Stop()</c> on a StateKey collision is a fast-fail-fast direct call, not retry-wrapped.
     /// </summary>
-    private Task HandlePlayAsync(PlayEffectCommand play, CancellationToken cancellationToken)
+    private async Task HandlePlayAsync(PlayEffectCommand play, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -263,10 +334,27 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
             var effectGuid = effect.EffectType == ForceEffectType.ConstantForce
                 ? EffectGuid.ConstantForce
                 : EffectGuid.Sine;
-            var created = device.CreateEffect(effectGuid, parameters);
+
+            // M9: CreateEffect returns a value, so capture it through a closure local. Nullable (NOT
+            // `null!`): a genuine null after the wrapper means the wrapper exhausted its retry budget —
+            // the post-call guard below depends on `created is null` being a reachable state.
+            IDirectInputEffectAbstraction? created = null;
+            await ExecuteWithReacquireAsync(
+                () => created = device.CreateEffect(effectGuid, parameters),
+                "CreateEffect",
+                cancellationToken).ConfigureAwait(false);
+
+            if (created is null)
+            {
+                // The retry wrapper exhausted its budget (or hit Fatal) and already logged a Warning
+                // ("effect not played"). Must NOT fall through to GetOrAdd — publishing null into
+                // _effectCache would corrupt the cache. Bail; the play is observably a no-op.
+                return;
+            }
 
             // Atomic publish. If another thread won this key's race, GetOrAdd returns the winner;
-            // dispose our loser. !ReferenceEquals == we lost.
+            // dispose our loser. !ReferenceEquals == we lost. Flow analysis has narrowed `created` to
+            // non-null past the guard above.
             resolved = _effectCache.GetOrAdd(cacheKey, created);
             if (!ReferenceEquals(resolved, created))
             {
@@ -279,20 +367,29 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
         // replay, the cache returned the same effect this `prior` references; a params change yields a
         // different effect (correct: stop old, start new). `prior != resolved` on a same-params replay
         // would indicate _effectCache corruption — documented expectation, not a guard.
+        // The prior-effect Stop() is a fast-fail-fast direct call — NOT routed through the retry wrapper.
         if (effect.StateKey is not null
             && _activeByStateKey.TryRemove(effect.StateKey, out var prior))
         {
             prior.Stop();
         }
 
-        resolved.Start(iterations: 1, EffectPlayFlags.None);
+        // M9: Start routed through the retry wrapper. effectForRedownload: resolved — on a NeedsRedownload
+        // classification the wrapper calls resolved.Download() before re-issuing Start. If Start exhausts
+        // its retry budget the effect may not actually be playing, yet the code below still indexes it in
+        // _activeByStateKey: the wrapper is non-throwing so HandlePlayAsync cannot observe the failure.
+        // Accepted per §F ("effect not played is observable but non-fatal") — a stale _activeByStateKey
+        // entry is harmless (a later Stop just stops a non-playing effect; a later same-key Play replaces it).
+        await ExecuteWithReacquireAsync(
+            () => resolved.Start(iterations: 1, EffectPlayFlags.None),
+            "Start",
+            cancellationToken,
+            effectForRedownload: resolved).ConfigureAwait(false);
 
         if (effect.StateKey is not null)
         {
             _activeByStateKey[effect.StateKey] = resolved;
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -305,6 +402,8 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         if (_activeByStateKey.TryRemove(stop.StateKey, out var effect))
         {
+            // Fast-fail-fast: a classified Stop() failure propagates by design — Stop is NOT routed
+            // through the M9 retry wrapper (only HandlePlayAsync's CreateEffect/Start are).
             effect.Stop();
             Log.EffectStopped(_logger, stop.StateKey);
         }
@@ -338,7 +437,9 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
             catch (Exception ex)
             {
                 // Best-effort emergency stop: one effect failing to Stop() must not block the others or
-                // the device-wide StopAll below. M9's retry loop adds classified recovery here.
+                // the device-wide StopAll below. Stop() classified failures are NOT routed through the M9
+                // retry wrapper — emergency stop is fast-fail-fast; the try/catch + Warning log is the
+                // recovery posture here by design.
                 Log.StopAllEffectFailed(_logger, stateKey, ex);
             }
         }
@@ -348,6 +449,166 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
         _device?.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll);
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="operation"/> against the device, classifying any thrown DirectInput exception
+    /// (via <see cref="DirectInputErrorClassifier"/>) and applying the M9 recovery strategy: re-acquire
+    /// (count-based, max 3 attempts, 50/200/500 ms backoff), re-download (one-shot), or transient retry
+    /// (one-shot, immediate). The three retry budgets are independent. On exhaustion of any path — and on
+    /// a <see cref="DirectInputErrorClass.Fatal"/> classification — this method logs a Warning and
+    /// <b>returns</b>; it never throws a classified exception to the caller (see <see cref="ExecuteAsync"/>
+    /// remarks for the full contract). Non-classified exceptions (e.g.
+    /// <see cref="OperationCanceledException"/> from a cancelled backoff delay) propagate.
+    /// </summary>
+    /// <param name="operation">The device call to run and, on a classified failure, re-issue.</param>
+    /// <param name="operationName">Short operation label for log correlation (e.g. "CreateEffect", "Start").</param>
+    /// <param name="cancellationToken">Cancellation for the re-acquire backoff delay.</param>
+    /// <param name="effectForRedownload">
+    /// The effect to <see cref="IDirectInputEffectAbstraction.Download"/> before re-issuing
+    /// <paramref name="operation"/> on the <see cref="DirectInputErrorClass.NeedsRedownload"/> path. Pass
+    /// the effect for a <c>Start</c> operation; pass <see langword="null"/> for <c>CreateEffect</c> — there
+    /// is no effect yet to re-download, so <c>NeedsRedownload</c> is an unreachable classification for
+    /// <c>CreateEffect</c>. If a <see langword="null"/> effect ever does hit the redownload path, the
+    /// <c>?.</c> short-circuits the Download call and the wrapper logs a Warning and returns — consistent
+    /// with the non-propagating contract; the failure is never silently swallowed.
+    /// </param>
+    private async Task ExecuteWithReacquireAsync(
+        Action operation,
+        string operationName,
+        CancellationToken cancellationToken,
+        IDirectInputEffectAbstraction? effectForRedownload = null)
+    {
+        var reacquireAttempts = 0;
+        var redownloadTried = false;
+        var transientTried = false;
+        var anyRetryAttempted = false;
+        var lastClassification = string.Empty;
+
+        while (true)
+        {
+            try
+            {
+                operation();
+                if (anyRetryAttempted)
+                {
+                    // The operation succeeded on a re-issue after a classified failure — record the
+                    // transparent recovery so diagnostics can distinguish it from a never-failed call.
+                    Log.RetryPathRecovered(_logger, operationName, lastClassification);
+                }
+
+                return;
+            }
+            catch (Exception primaryEx)
+            {
+                // Broad catch by design: the operation is an opaque device call; DirectInputErrorClassifier
+                // is the single place that knows DirectInput HRESULTs and classifies anything (with a
+                // _ => Fatal fallback). Fatal is logged at Warning and the Task completes successfully per
+                // the M9 contract — narrowing the catch would instead fault the Task on unexpected
+                // exceptions, contradicting §F's posture. CA1031 is .editorconfig 'suggestion' — this
+                // comment is the justification; no [SuppressMessage] needed.
+                var classification = DirectInputErrorClassifier.Classify(primaryEx);
+
+                switch (classification)
+                {
+                    case DirectInputErrorClass.NeedsReacquire:
+                        if (reacquireAttempts >= 3)
+                        {
+                            Log.RetryPathExhausted(_logger, operationName, "re-acquire exhausted after 3 attempts", primaryEx);
+                            return;
+                        }
+
+                        var delayMs = reacquireAttempts switch { 0 => 50, 1 => 200, _ => 500 };
+                        Log.RetryAttempt(
+                            _logger,
+                            operationName,
+                            $"NeedsReacquire attempt {reacquireAttempts + 1} of 3: {primaryEx.Message}",
+                            delayMs);
+
+                        // Backoff. A cancelled token makes Task.Delay throw OperationCanceledException —
+                        // NOT a classified DI exception, so it propagates out of this method and faults
+                        // the Task. That is the intended M9 behavior (non-classified exceptions propagate).
+                        await _delayStrategy(delayMs, cancellationToken).ConfigureAwait(false);
+
+                        try
+                        {
+                            // _device is the field; non-null whenever a wrapped call runs (HandlePlayAsync's
+                            // `device` local guard throws first). The ?. keeps the wrapper independently
+                            // null-safe and warning-free without a !-bang.
+                            _device?.Unacquire();
+                            _device?.Acquire();
+                        }
+                        catch (Exception reacquireEx)
+                        {
+                            // The Unacquire/Acquire recovery action itself threw — log and continue, do NOT
+                            // re-classify it. The loop re-issues operation() next, which re-triggers
+                            // classification on the real failure; the bounded reacquireAttempts budget
+                            // guarantees termination regardless.
+                            Log.ReacquireCallThrew(_logger, operationName, reacquireEx);
+                        }
+
+                        reacquireAttempts++;
+                        anyRetryAttempted = true;
+                        lastClassification = "NeedsReacquire";
+                        continue;
+
+                    case DirectInputErrorClass.NeedsRedownload:
+                        if (redownloadTried)
+                        {
+                            Log.RetryPathExhausted(_logger, operationName, "re-download already attempted", primaryEx);
+                            return;
+                        }
+
+                        redownloadTried = true;
+                        Log.RetryAttempt(_logger, operationName, $"NeedsRedownload: {primaryEx.Message}", delayMs: 0);
+
+                        // §F gap fix: re-download before re-issuing. For CreateEffect, effectForRedownload is
+                        // null (no effect yet) — the ?. short-circuits and the operation is still re-issued
+                        // via the loop; the spent one-bite flag means a second NeedsRedownload exhausts
+                        // cleanly. continue (not an inline retry) so a follow-on failure is re-classified
+                        // and the reacquire budget stays independent of this bite.
+                        try
+                        {
+                            effectForRedownload?.Download();
+                        }
+                        catch (Exception downloadEx)
+                        {
+                            // The Download() recovery action itself threw — log and continue. The loop
+                            // re-issues operation() next, which re-triggers classification on whatever real
+                            // failure follows. Symmetric with the Unacquire/Acquire catch in the reacquire
+                            // path — M9 contract: classified DI failures (including failures in recovery
+                            // actions) don't propagate.
+                            Log.RedownloadCallThrew(_logger, operationName, downloadEx);
+                        }
+
+                        anyRetryAttempted = true;
+                        lastClassification = "NeedsRedownload";
+                        continue;
+
+                    case DirectInputErrorClass.Transient:
+                        if (transientTried)
+                        {
+                            Log.RetryPathExhausted(_logger, operationName, "transient retry already attempted", primaryEx);
+                            return;
+                        }
+
+                        transientTried = true;
+                        Log.RetryAttempt(_logger, operationName, $"Transient: {primaryEx.Message}", delayMs: 0);
+
+                        // Transient retries IMMEDIATELY — no _delayStrategy call, no recovery action; the
+                        // re-issue itself IS the recovery. continue (not an inline retry) so a follow-on
+                        // failure is re-classified and the reacquire budget stays independent of this bite.
+                        anyRetryAttempted = true;
+                        lastClassification = "Transient";
+                        continue;
+
+                    case DirectInputErrorClass.Fatal:
+                    default:
+                        Log.RetryPathExhausted(_logger, operationName, "fatal error", primaryEx);
+                        return;
+                }
+            }
+        }
     }
 
     /// <inheritdoc />
