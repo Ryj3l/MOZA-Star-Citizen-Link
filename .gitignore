@@ -122,3 +122,4 @@ packages/
 # Claude Code per-project state (local agent config, never committed)
 .claude/
 
+docs/handoffs/
