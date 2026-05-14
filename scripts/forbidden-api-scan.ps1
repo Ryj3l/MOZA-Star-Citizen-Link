@@ -54,6 +54,33 @@ $bannedPatterns = @(
     @{ Pattern = '\bSetWindowsHookEx\s*\('; Reason = 'Global hooks can flag EAC. PRP §13.3.' },
     @{ Pattern = 'using\s+Newtonsoft\.Json'; Reason = 'Use System.Text.Json. PRP §2.9.' },
     @{ Pattern = 'FluentAssertions.*Version="7'; Reason = 'FluentAssertions 7+ is commercial. Pin to 6.x. See ddr-fluentassertions.md.' }
+
+    # ============================================================
+    # ACTIVATE AFTER T-07 MILESTONE 12
+    # ------------------------------------------------------------
+    # Patterns below reject references to the legacy DirectInput
+    # COM-interop class names that T-07 replaces with Vortice.DirectInput.
+    #
+    # They are STAGED here (commented) during T-07 Milestone 1.5
+    # so the deletion step in T-07 Milestone 12 can activate them
+    # with a single mechanical uncomment.
+    #
+    # Activation contract:
+    #   When Milestone 12 deletes the 5 legacy files
+    #   (DirectInputForceFeedbackDevice.cs and Native/*.cs), uncomment
+    #   each line below. The scan must then continue to report zero
+    #   matches against main. If it doesn't, a reference was missed
+    #   during rewire — fix the offending file before merging T-07.
+    #
+    # Do NOT uncomment before Milestone 12 — references to these names
+    # still exist in the legacy files and in ForceFeedbackDeviceFactory.cs
+    # during the migration window.
+    # ============================================================
+    # @{ Pattern = '\bDirectInputForceFeedbackDevice\b'; Reason = 'Replaced by VorticeDirectInputDevice in T-07. Old hand-rolled COM-interop class is deleted.' }
+    # @{ Pattern = '\bDirectInputNative\b'; Reason = 'Replaced by VorticeDirectInputAdapter in T-07. Hand-rolled P/Invoke surface is deleted.' }
+    # @{ Pattern = '\bDirectInputComInterfaces\b'; Reason = 'Replaced by Vortice.DirectInput managed wrappers in T-07. ComImport interface declarations are deleted.' }
+    # @{ Pattern = '\bDirectInputStructures\b'; Reason = 'Replaced by Vortice.DirectInput typed structs in T-07. Hand-rolled marshalable structs are deleted.' }
+    # @{ Pattern = '\bDirectInputConstants\b'; Reason = 'Replaced by Vortice.DirectInput typed enums and constants in T-07. Hand-rolled constants are deleted.' }
 )
 
 $violations = @()

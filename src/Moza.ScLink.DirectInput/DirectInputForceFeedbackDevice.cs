@@ -5,6 +5,9 @@ using Moza.ScLink.Core;
 using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Models;
 using Moza.ScLink.DirectInput.Native;
+// T-07 M2: alias to disambiguate from the new public Moza.ScLink.DirectInput.DirectInputDeviceInfo record.
+// This file is deleted in T-07 M12; the alias goes with it.
+using LegacyDeviceInfo = Moza.ScLink.DirectInput.Native.DirectInputDeviceInfo;
 
 namespace Moza.ScLink.DirectInput;
 
@@ -18,7 +21,7 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
     private IDirectInput8W? _directInput;
     private IDirectInputDevice8W? _device;
 
-    private DirectInputForceFeedbackDevice(DirectInputDeviceInfo deviceInfo)
+    private DirectInputForceFeedbackDevice(LegacyDeviceInfo deviceInfo)
     {
         _instanceGuid = deviceInfo.InstanceGuid;
         _productName = string.IsNullOrWhiteSpace(deviceInfo.ProductName)
@@ -377,7 +380,7 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
         DirectInputNative.ThrowIfFailed(result, $"DirectInput could not download '{effectName}'");
     }
 
-    private static int IsPreferredDevice(DirectInputDeviceInfo deviceInfo)
+    private static int IsPreferredDevice(LegacyDeviceInfo deviceInfo)
     {
         var text = $"{deviceInfo.ProductName} {deviceInfo.InstanceName}";
         return text.Contains("MOZA", StringComparison.OrdinalIgnoreCase) ||
@@ -387,7 +390,7 @@ public sealed class DirectInputForceFeedbackDevice : IForceFeedbackDevice
             : 0;
     }
 
-    private static string DisplayName(DirectInputDeviceInfo deviceInfo)
+    private static string DisplayName(LegacyDeviceInfo deviceInfo)
     {
         if (!string.IsNullOrWhiteSpace(deviceInfo.ProductName))
         {
