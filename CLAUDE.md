@@ -46,6 +46,43 @@ T-25 and T-26 add a development-only replay capability under `tools/Moza.ScLink.
 - **Definition of Done:** the acceptance criteria checklist at the bottom of the task spec must all be checked.
 - **Before opening a PR**, run locally: `dotnet build`, `dotnet test`, `pwsh ./scripts/forbidden-api-scan.ps1`, `pwsh ./scripts/check-ddr-completeness.ps1`.
 
+## Patterns
+
+These emerged from T-04 through T-07 and are now operating policy.
+
+### Empirical verification over assumption
+
+For any third-party API not previously verified in this repo, probe the actual installed shape before writing dependent production code. Task specs are approximations; the installed package is the source of truth.
+
+Probe escalation, in order:
+1. Compile a small test against the installed types. The compiler is the cheapest authoritative check.
+2. Inspect via reflection against the installed DLL (`Add-Type -Path ...` + `GetMembers()`).
+3. Only then: search GitHub source or read package documentation. These can be stale for the version installed.
+
+When the plan and empirical reality conflict, surface explicitly. Do not silently adapt. Pattern: try the spec → hit the discrepancy → probe → report → propose correction → wait for operator → apply. Document the discovered shape in both the production code (XML doc citing the verification) and the PR description.
+
+### Surface design changes are not "minor"
+
+When mid-task work requires changing an interface, public record, or other surface that a previous milestone established as "locked": surface the change explicitly. Do not silently adjust.
+
+Format: "Milestone N requires a change to [artifact] established in Milestone M. The change is [delta]. Reason: [why previous shape was insufficient]. Cost: [test churn]. Reversible: yes/no. Approve before proceeding?"
+
+Surface changes cascade into downstream milestones and tests. The operator blesses before the change is woven into multiple files.
+
+### Commit cadence
+
+WIP commits at every natural pause, push immediately after commit. Reasons: machine loss between commits is real risk for multi-hour sessions; remote-backed state is durable across `/clear`, machine reboot, or session interruption; squash-merge at PR time washes out granular history anyway.
+
+Commit message format for milestone-style WIP commits: `wip: T-NN MX-MY — <summary>` followed by a bullet list of what landed. Conventional Commits applies to the final PR commit; WIP commits use the `wip:` prefix for clarity.
+
+Do not commit intermediate non-building state. Do not commit only part of a milestone's deliverable. Otherwise: commit + push at every milestone boundary that completes cleanly.
+
+### Demonstrate dependencies in the milestone that introduces them
+
+When a constructor accepts a dependency (logger, time provider, options), demonstrate at least one real use of it in the same milestone. Otherwise the analyzer (IDE0052, CA1823) flags the field as unused and the reviewer wonders why the dep exists.
+
+For ILogger specifically: a single `LoggerMessage.Define`-backed entry (satisfies CA1848) at a sensible event point — initialization complete, primary action taken, terminal state reached. Pick a real event the application would want to log anyway; do not add fake or trivial calls.
+
 ## Style
 
 - File-scoped namespaces.
