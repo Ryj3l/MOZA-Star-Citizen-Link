@@ -150,15 +150,205 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         public static void DeviceInitialized(ILogger logger, string displayName, Guid instanceGuid)
             => _deviceInitialized(logger, displayName, instanceGuid, null);
+
+        private static readonly Action<ILogger, string, ForceEffectType, Exception?> _effectCacheHit =
+            LoggerMessage.Define<string, ForceEffectType>(
+                LogLevel.Debug,
+                new EventId(2, nameof(EffectCacheHit)),
+                "DI effect cache hit: {EffectId} ({EffectType})");
+
+        public static void EffectCacheHit(ILogger logger, string effectId, ForceEffectType effectType)
+            => _effectCacheHit(logger, effectId, effectType, null);
+
+        private static readonly Action<ILogger, string, ForceEffectType, Exception?> _effectCacheMiss =
+            LoggerMessage.Define<string, ForceEffectType>(
+                LogLevel.Debug,
+                new EventId(3, nameof(EffectCacheMiss)),
+                "DI effect cache miss: {EffectId} ({EffectType}) — creating effect");
+
+        public static void EffectCacheMiss(ILogger logger, string effectId, ForceEffectType effectType)
+            => _effectCacheMiss(logger, effectId, effectType, null);
+
+        private static readonly Action<ILogger, string, Exception?> _effectStopped =
+            LoggerMessage.Define<string>(
+                LogLevel.Debug,
+                new EventId(4, nameof(EffectStopped)),
+                "DI effect stopped: {StateKey}");
+
+        public static void EffectStopped(ILogger logger, string stateKey)
+            => _effectStopped(logger, stateKey, null);
+
+        private static readonly Action<ILogger, string, Exception?> _stopUnknownStateKey =
+            LoggerMessage.Define<string>(
+                LogLevel.Debug,
+                new EventId(5, nameof(StopUnknownStateKey)),
+                "DI stop for unknown StateKey: {StateKey}; no-op");
+
+        public static void StopUnknownStateKey(ILogger logger, string stateKey)
+            => _stopUnknownStateKey(logger, stateKey, null);
+
+        private static readonly Action<ILogger, string, Exception?> _stopAllEffectFailed =
+            LoggerMessage.Define<string>(
+                LogLevel.Warning,
+                new EventId(6, nameof(StopAllEffectFailed)),
+                "DI Stop() failed during StopAll for {StateKey}; continuing");
+
+        public static void StopAllEffectFailed(ILogger logger, string stateKey, Exception exception)
+            => _stopAllEffectFailed(logger, stateKey, exception);
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// M8 dispatch: routes <see cref="PlayEffectCommand"/> / <see cref="StopEffectCommand"/> /
+    /// <see cref="StopAllCommand"/> to their handlers. Pure dispatch — on a transient DirectInput failure
+    /// the classified exception propagates to the caller; the re-acquire / re-download retry loop is M9.
+    /// </remarks>
     public Task ExecuteAsync(ForceCommand command, CancellationToken cancellationToken)
-        => throw new NotImplementedException("ExecuteAsync lands in T-07 M8.");
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(command);
+
+        return command switch
+        {
+            PlayEffectCommand play => HandlePlayAsync(play, cancellationToken),
+            StopEffectCommand stop => HandleStopAsync(stop, cancellationToken),
+            StopAllCommand => HandleStopAllAsync(cancellationToken),
+            _ => Task.FromException(new InvalidOperationException(
+                $"Unknown ForceCommand type: {command.GetType().Name}")),
+        };
+    }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Emergency stop. Stops every active effect best-effort, then issues a device-wide
+    /// <see cref="ForceFeedbackCommand.StopAll"/>. Shares <see cref="HandleStopAllAsync"/> with the
+    /// <see cref="StopAllCommand"/> dispatch arm.
+    /// </remarks>
     public Task StopAllAsync(CancellationToken cancellationToken)
-        => throw new NotImplementedException("StopAllAsync lands in T-07 M8.");
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return HandleStopAllAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Resolves (cache-or-create) and starts the effect for a <see cref="PlayEffectCommand"/>. On a
+    /// <see cref="ForceEffect.StateKey"/> collision the prior active effect is stopped and replaced. M8
+    /// calls <c>CreateEffect</c> / <c>Start</c> directly; M9 routes them through the re-acquire retry loop.
+    /// </summary>
+    private Task HandlePlayAsync(PlayEffectCommand play, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // _device is nullable (set by InitializeAsync). Playback genuinely cannot proceed without it.
+        var device = _device ?? throw new InvalidOperationException(
+            "ExecuteAsync(PlayEffectCommand) requires InitializeAsync to have completed.");
+
+        var effect = play.Effect;
+        var cacheKey = ComputeCacheKey(effect, play.FinalIntensity);
+
+        IDirectInputEffectAbstraction resolved;
+        if (_effectCache.TryGetValue(cacheKey, out var cached))
+        {
+            Log.EffectCacheHit(_logger, effect.EffectId, effect.EffectType);
+            resolved = cached;
+        }
+        else
+        {
+            Log.EffectCacheMiss(_logger, effect.EffectId, effect.EffectType);
+            var parameters = BuildEffectParameters(effect, play.FinalIntensity);
+
+            // BuildEffectParameters throws NotSupportedException for envelope-carrying effects and for
+            // every EffectType outside { Periodic, ConstantForce }, so by this line the type is one of
+            // those two — the ternary cannot mis-classify.
+            var effectGuid = effect.EffectType == ForceEffectType.ConstantForce
+                ? EffectGuid.ConstantForce
+                : EffectGuid.Sine;
+            var created = device.CreateEffect(effectGuid, parameters);
+
+            // Atomic publish. If another thread won this key's race, GetOrAdd returns the winner;
+            // dispose our loser. !ReferenceEquals == we lost.
+            resolved = _effectCache.GetOrAdd(cacheKey, created);
+            if (!ReferenceEquals(resolved, created))
+            {
+                created.Dispose();
+            }
+        }
+
+        // StateKey-collision == replace. Stop + drop the prior active effect BEFORE starting the new one
+        // (below) so two effects never share overlapping axes. Invariant: on a same-StateKey same-params
+        // replay, the cache returned the same effect this `prior` references; a params change yields a
+        // different effect (correct: stop old, start new). `prior != resolved` on a same-params replay
+        // would indicate _effectCache corruption — documented expectation, not a guard.
+        if (effect.StateKey is not null
+            && _activeByStateKey.TryRemove(effect.StateKey, out var prior))
+        {
+            prior.Stop();
+        }
+
+        resolved.Start(iterations: 1, EffectPlayFlags.None);
+
+        if (effect.StateKey is not null)
+        {
+            _activeByStateKey[effect.StateKey] = resolved;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Stops the sustained effect indexed under <see cref="StopEffectCommand.StateKey"/>. An unknown
+    /// StateKey is a logged no-op — the resolver may emit a stop for an effect that already expired.
+    /// </summary>
+    private Task HandleStopAsync(StopEffectCommand stop, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (_activeByStateKey.TryRemove(stop.StateKey, out var effect))
+        {
+            effect.Stop();
+            Log.EffectStopped(_logger, stop.StateKey);
+        }
+        else
+        {
+            Log.StopUnknownStateKey(_logger, stop.StateKey);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Emergency stop. Snapshots and clears the active-effect index, stops each effect best-effort, then
+    /// issues a device-wide <see cref="ForceFeedbackCommand.StopAll"/>. Effects stay in
+    /// <see cref="_effectCache"/> for reuse / disposal — only the active index is cleared.
+    /// </summary>
+    private Task HandleStopAllAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // ConcurrentDictionary.ToArray() is an atomic snapshot (intrinsic, no LINQ). Snapshot, then clear.
+        var active = _activeByStateKey.ToArray();
+        _activeByStateKey.Clear();
+
+        foreach (var (stateKey, effect) in active)
+        {
+            try
+            {
+                effect.Stop();
+            }
+            catch (Exception ex)
+            {
+                // Best-effort emergency stop: one effect failing to Stop() must not block the others or
+                // the device-wide StopAll below. M9's retry loop adds classified recovery here.
+                Log.StopAllEffectFailed(_logger, stateKey, ex);
+            }
+        }
+
+        // Hardware-level guarantee. _device is nullable; an emergency stop with no acquired device is a
+        // benign no-op (null-conditional, lenient).
+        _device?.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll);
+
+        return Task.CompletedTask;
+    }
 
     /// <inheritdoc />
     /// <remarks>

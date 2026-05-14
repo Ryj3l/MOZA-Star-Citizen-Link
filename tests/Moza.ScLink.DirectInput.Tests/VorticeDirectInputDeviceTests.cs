@@ -1,8 +1,10 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 using NSubstitute;
+using Vortice.DirectInput;
 // Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect — same alias the
 // production VorticeDirectInputDevice.cs uses; both die when the legacy Models.ForceEffect is removed.
 using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
@@ -236,5 +238,235 @@ public sealed class VorticeDirectInputDeviceTests
         var b = VorticeDirectInputDevice.ComputeCacheKey(AnEffect(stateKey: string.Empty), 0.5);
 
         a.Should().Be(b);
+    }
+
+    // ── ExecuteAsync dispatch (plan §H tests 1, 2, 7 — M8 milestone) ─────────────────────────
+
+    private sealed record UnknownCommand : ForceCommand;
+
+    private static PlayEffectCommand APlayCommand(ForceEffect effect, double finalIntensity = 0.5) =>
+        new(effect, finalIntensity)
+        {
+            CommandId = Guid.NewGuid().ToString(),
+            IssuedAt = DateTimeOffset.UnixEpoch,
+        };
+
+    private static StopEffectCommand AStopCommand(string stateKey) =>
+        new(stateKey)
+        {
+            CommandId = Guid.NewGuid().ToString(),
+            IssuedAt = DateTimeOffset.UnixEpoch,
+        };
+
+    private static StopAllCommand AStopAllCommand() =>
+        new()
+        {
+            CommandId = Guid.NewGuid().ToString(),
+            IssuedAt = DateTimeOffset.UnixEpoch,
+        };
+
+    // Builds a VorticeDirectInputDevice already driven through InitializeAsync against fully-mocked
+    // abstractions. CreateEffect returns a fresh effect mock per call by default; tests that need to hold
+    // a reference override with an explicit .Returns(...).
+    private static async Task<(VorticeDirectInputDevice Sut,
+                               IDirectInputAbstraction Abstraction,
+                               IDirectInputDeviceAbstraction Device)> AnInitializedSutAsync()
+    {
+        var abstraction = Substitute.For<IDirectInputAbstraction>();
+        var device = Substitute.For<IDirectInputDeviceAbstraction>();
+        abstraction.CreateDevice(Arg.Any<Guid>()).Returns(device);
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>())
+            .Returns(_ => Substitute.For<IDirectInputEffectAbstraction>());
+
+        var sut = new VorticeDirectInputDevice(abstraction, AnAb6Identity(), ALogger());
+        await sut.InitializeAsync(CancellationToken.None);
+        return (sut, abstraction, device);
+    }
+
+    [Fact]
+    public async Task CreatesEffectOnFirstPlay()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        device.Received(1).CreateEffect(EffectGuid.Sine, Arg.Any<EffectParameters>());
+        effectMock.Received(1).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task ReusesCachedEffectOnRepeatPlay()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var effect = AnEffect();
+        await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+        await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+
+        device.Received(1).CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>());
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task DisposesAllCachedEffectsOnDispose()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var firstEffect = Substitute.For<IDirectInputEffectAbstraction>();
+        var secondEffect = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>())
+            .Returns(firstEffect, secondEffect);
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect(effectId: "fx.one")), CancellationToken.None);
+        await sut.ExecuteAsync(APlayCommand(AnEffect(effectId: "fx.two")), CancellationToken.None);
+
+        await sut.DisposeAsync();
+
+        firstEffect.Received(1).Dispose();
+        secondEffect.Received(1).Dispose();
+        device.Received(1).Dispose();
+    }
+
+    [Fact]
+    public async Task PlayWithStateKeyStopsPriorEffectThenStartsNewOnParamsChange()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var firstEffect = Substitute.For<IDirectInputEffectAbstraction>();
+        var secondEffect = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>())
+            .Returns(firstEffect, secondEffect);
+
+        // Intensities 0.5 and 0.9 are chosen because ComputeCacheKey rounds them to distinct buckets
+        // (IntensityRoundedThousandths 500 vs 900) — the second play is a genuine params change, not a
+        // same-key replay. This locks the test to the rounding rule rather than "different values".
+        var effect = AnEffect(stateKey: "sk1");
+        await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+        await sut.ExecuteAsync(APlayCommand(effect, 0.9), CancellationToken.None);
+
+        Received.InOrder(() =>
+        {
+            firstEffect.Stop();
+            secondEffect.Start(1, EffectPlayFlags.None);
+        });
+        firstEffect.Received(1).Stop();
+        secondEffect.Received(1).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task PlayWithSameStateKeySameParamsRestartsSameEffect()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        var effect = AnEffect(stateKey: "sk1");
+        await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+        await sut.ExecuteAsync(APlayCommand(effect, 0.5), CancellationToken.None);
+
+        // Same StateKey + same params == same cache key: the second play resolves the *same* cached
+        // effect instance, stops it (step 3), then restarts it (step 4) — a clean restart on one object.
+        // Asserting on the held effectMock reference pins the same-reference invariant directly.
+        device.Received(1).CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>());
+        effectMock.Received(1).Stop();
+        effectMock.Received(2).Start(1, EffectPlayFlags.None);
+    }
+
+    [Fact]
+    public async Task StopEffectStopsActiveEffectForKnownStateKey()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect(stateKey: "sk1")), CancellationToken.None);
+        await sut.ExecuteAsync(AStopCommand("sk1"), CancellationToken.None);
+
+        effectMock.Received(1).Stop();
+    }
+
+    [Fact]
+    public async Task StopEffectIsNoOpForUnknownStateKey()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+
+        var act = async () => await sut.ExecuteAsync(AStopCommand("never-played"), CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        device.DidNotReceive().CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>());
+    }
+
+    [Fact]
+    public async Task StopAllStopsEveryActiveEffectAndSendsHardwareStopAll()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectA = Substitute.For<IDirectInputEffectAbstraction>();
+        var effectB = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>())
+            .Returns(effectA, effectB);
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect(effectId: "fx.a", stateKey: "a")), CancellationToken.None);
+        await sut.ExecuteAsync(APlayCommand(AnEffect(effectId: "fx.b", stateKey: "b")), CancellationToken.None);
+        await sut.ExecuteAsync(AStopAllCommand(), CancellationToken.None);
+
+        effectA.Received(1).Stop();
+        effectB.Received(1).Stop();
+        device.Received(1).SendForceFeedbackCommand(ForceFeedbackCommand.StopAll);
+    }
+
+    [Fact]
+    public async Task StopAllAsyncEntrypointMatchesStopAllCommandDispatch()
+    {
+        var (sut, _, device) = await AnInitializedSutAsync();
+        var effectMock = Substitute.For<IDirectInputEffectAbstraction>();
+        device.CreateEffect(Arg.Any<Guid>(), Arg.Any<EffectParameters>()).Returns(effectMock);
+
+        await sut.ExecuteAsync(APlayCommand(AnEffect(stateKey: "sk1")), CancellationToken.None);
+        await sut.StopAllAsync(CancellationToken.None);
+
+        effectMock.Received(1).Stop();
+        device.Received(1).SendForceFeedbackCommand(ForceFeedbackCommand.StopAll);
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncWithUnknownCommandTypeFaultsWithInvalidOperationException()
+    {
+        var (sut, _, _) = await AnInitializedSutAsync();
+        var unknown = new UnknownCommand
+        {
+            CommandId = Guid.NewGuid().ToString(),
+            IssuedAt = DateTimeOffset.UnixEpoch,
+        };
+
+        var act = async () => await sut.ExecuteAsync(unknown, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*UnknownCommand*");
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncThrowsObjectDisposedExceptionAfterDispose()
+    {
+        var (sut, _, _) = await AnInitializedSutAsync();
+        await sut.DisposeAsync();
+
+        var act = () => sut.ExecuteAsync(APlayCommand(AnEffect()), CancellationToken.None);
+
+        // ExecuteAsync's guard throws synchronously, but FA 6.x exposes only ThrowAsync for Func<Task>;
+        // ThrowAsync catches a synchronous throw from the func just the same.
+        await act.Should().ThrowAsync<ObjectDisposedException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsyncThrowsArgumentNullExceptionForNullCommand()
+    {
+        var (sut, _, _) = await AnInitializedSutAsync();
+
+        var act = () => sut.ExecuteAsync(null!, CancellationToken.None);
+
+        (await act.Should().ThrowAsync<ArgumentNullException>())
+            .Which.ParamName.Should().Be("command");
     }
 }
