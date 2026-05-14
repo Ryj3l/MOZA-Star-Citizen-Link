@@ -10,4 +10,9 @@
     <ProjectReference Include="..\Moza.ScLink.Core\Moza.ScLink.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Vortice.DirectInput" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
 </Project>
