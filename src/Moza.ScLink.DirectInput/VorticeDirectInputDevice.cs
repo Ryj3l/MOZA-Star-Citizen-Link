@@ -5,6 +5,9 @@ using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 using Vortice.DirectInput;
+// Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect
+// (the legacy type is consumed only by DirectInputForceFeedbackDevice.cs, deleted in T-07 M12).
+using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
 
 namespace Moza.ScLink.DirectInput;
 
@@ -182,5 +185,138 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
     {
         var window = Application.Current?.MainWindow;
         return window is null ? IntPtr.Zero : new WindowInteropHelper(window).Handle;
+    }
+
+    // ── Effect-parameter construction (T-07 M6) ──────────────────────────────────────────────
+    // Pure translation from the domain ForceEffect to a Vortice EffectParameters. No device
+    // interaction. Wired into ExecuteAsync / HandlePlayAsync in M8; the effect cache is M7 and the
+    // re-acquire / re-download retry loop is M9. The magnitude / period / duration math mirrors the
+    // legacy DirectInputForceFeedbackDevice exactly (T-07.md non-goal: "No behavioral changes").
+
+    private const int NominalMaxGain = 10000;                       // legacy DiFfNominalMax
+    private const int NoTriggerButton = -1;                         // DirectInput "no trigger button"
+    private const double DefaultPeriodicFrequencyHz = 20.0;         // legacy HertzToPeriod fallback
+
+    /// <summary>DirectInput INFINITE duration sentinel. 0xFFFFFFFF reinterpreted as signed int = -1.</summary>
+    private const int InfiniteDuration = unchecked((int)0xFFFFFFFF);
+
+    /// <summary>
+    /// Scales a normalized force direction to DirectInput's Cartesian direction units. Each component is
+    /// clamped to [-1, 1] then scaled by <see cref="NominalMaxGain"/>. When both inputs are exactly zero the
+    /// direction is unspecified, and this returns the legacy hardcoded pair <c>(1, 1)</c> — the value the
+    /// pre-Vortice device wrote into the direction array for every effect — preserving AB6/AB9-validated feel
+    /// until T-14 begins populating real directions.
+    /// </summary>
+    /// <param name="directionX">Horizontal direction component, nominally in [-1.0, 1.0].</param>
+    /// <param name="directionY">Vertical direction component, nominally in [-1.0, 1.0].</param>
+    /// <returns>The scaled Cartesian direction pair for <see cref="EffectParameters.Directions"/>.</returns>
+    internal static (int X, int Y) ScaleDirection(double directionX, double directionY)
+    {
+        if (directionX == 0.0 && directionY == 0.0)
+        {
+            // Legacy parity: the literal pair (1, 1), NOT (NominalMaxGain, NominalMaxGain).
+            return (1, 1);
+        }
+
+        var x = (int)Math.Round(Math.Clamp(directionX, -1.0, 1.0) * NominalMaxGain);
+        var y = (int)Math.Round(Math.Clamp(directionY, -1.0, 1.0) * NominalMaxGain);
+        return (x, y);
+    }
+
+    /// <summary>
+    /// Translates a <see cref="ForceEffect"/> and its gain-resolved final intensity into a Vortice
+    /// <see cref="EffectParameters"/>. Pure function — no device interaction. Exercised by M7/M8 tests
+    /// through <c>HandlePlayAsync</c>; not yet called by production code (<see cref="ExecuteAsync"/> is an
+    /// M8 stub).
+    /// </summary>
+    /// <param name="effect">The catalog effect descriptor to render.</param>
+    /// <param name="finalIntensity">Gain-stack-resolved intensity in [0.0, 1.0].</param>
+    /// <exception cref="ArgumentNullException"><paramref name="effect"/> is <see langword="null"/>.</exception>
+    /// <exception cref="NotSupportedException">
+    /// The effect carries a populated <see cref="ForceEffect.Envelope"/> (envelope mapping is deferred to
+    /// T-14 — see issue #17), or its <see cref="ForceEffect.EffectType"/> is one M6 does not build
+    /// (<see cref="ForceEffectType.PeriodicWithEnvelope"/> / <see cref="ForceEffectType.Composite"/>).
+    /// </exception>
+    internal static EffectParameters BuildEffectParameters(ForceEffect effect, double finalIntensity)
+    {
+        ArgumentNullException.ThrowIfNull(effect);
+
+        if (effect.Envelope is not null)
+        {
+            throw new NotSupportedException(
+                "Force-feedback envelopes are not implemented in T-07. T-14 introduces the " +
+                "ADSR-to-DirectInput envelope mapping once envelope-carrying effects enter the " +
+                "catalog. Tracked in issue #17.");
+        }
+
+        var magnitude = ScaleMagnitude(finalIntensity);
+        var (directionX, directionY) = ScaleDirection(effect.DirectionX, effect.DirectionY);
+
+        TypeSpecificParameters typeSpecific = effect.EffectType switch
+        {
+            ForceEffectType.Periodic => new PeriodicForce
+            {
+                Magnitude = magnitude,
+                Offset = 0,
+                Phase = 0,
+                Period = HertzToPeriodMicroseconds(effect.FrequencyHz),
+            },
+            ForceEffectType.ConstantForce => new ConstantForce
+            {
+                Magnitude = magnitude,
+            },
+            _ => throw new NotSupportedException(
+                $"Effect type '{effect.EffectType}' is not supported by the DirectInput output device. " +
+                "T-07 supports Periodic and ConstantForce. PeriodicWithEnvelope is deferred to T-14; " +
+                "Composite is out of scope per T-07.md non-goals."),
+        };
+
+        return new EffectParameters
+        {
+            Flags = EffectFlags.Cartesian | EffectFlags.ObjectIds,
+            Duration = DurationToMicroseconds(effect.Duration),
+            SamplePeriod = 0,
+            Gain = NominalMaxGain,
+            TriggerButton = NoTriggerButton,
+            TriggerRepeatInterval = 0,
+            StartDelay = 0,
+            Axes = [JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY],
+            Directions = [directionX, directionY],
+            // Vortice 3.6.2 annotates Envelope as non-nullable, but DirectInput semantics require a null
+            // envelope to mean "no envelope shaping" — the legacy device expressed this as lpEnvelope=NULL.
+            // null! is the deliberate, correct value here; T-14 replaces it when envelope mapping lands.
+            Envelope = null!,
+            Parameters = typeSpecific,
+        };
+    }
+
+    /// <summary>Scales an intensity in [0.0, 1.0] to a DirectInput magnitude in [0, <see cref="NominalMaxGain"/>].</summary>
+    private static int ScaleMagnitude(double intensity)
+        => (int)Math.Round(Math.Clamp(intensity, 0.0, 1.0) * NominalMaxGain);
+
+    /// <summary>
+    /// Converts a periodic-effect frequency to a DirectInput period in microseconds. Mirrors the legacy
+    /// <c>HertzToPeriod</c>: a non-positive frequency falls back to <see cref="DefaultPeriodicFrequencyHz"/>
+    /// rather than erroring, and the result is clamped to [1, <see cref="int.MaxValue"/>].
+    /// </summary>
+    private static int HertzToPeriodMicroseconds(double frequencyHz)
+    {
+        var frequency = frequencyHz <= 0.0 ? DefaultPeriodicFrequencyHz : frequencyHz;
+        return (int)Math.Clamp(1_000_000.0 / frequency, 1.0, int.MaxValue);
+    }
+
+    /// <summary>
+    /// Converts an effect duration to DirectInput microseconds. Mirrors the legacy <c>ToDirectInputDuration</c>:
+    /// <see cref="TimeSpan.Zero"/> (a sustained effect) maps to <see cref="InfiniteDuration"/>; any other value
+    /// is milliseconds × 1000, clamped to [1, <see cref="int.MaxValue"/>] — note the floor is 1, not 0.
+    /// </summary>
+    private static int DurationToMicroseconds(TimeSpan duration)
+    {
+        if (duration == TimeSpan.Zero)
+        {
+            return InfiniteDuration;
+        }
+
+        return (int)Math.Clamp(duration.TotalMilliseconds * 1000.0, 1.0, int.MaxValue);
     }
 }

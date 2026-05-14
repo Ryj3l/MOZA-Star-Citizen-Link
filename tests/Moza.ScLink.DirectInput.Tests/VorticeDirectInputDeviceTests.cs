@@ -7,15 +7,14 @@ using NSubstitute;
 namespace Moza.ScLink.DirectInput.Tests;
 
 /// <summary>
-/// Constructor-guard tests for <see cref="VorticeDirectInputDevice"/>. Maps to plan §H tests 8/9/10
-/// (numbered <c>VorticeDirectInputDeviceConstructorThrowsArgumentExceptionOnUnknownDeviceModel</c>,
-/// <c>VorticeDirectInputDeviceConstructorAcceptsMozaAb6Model</c>, <c>VorticeDirectInputDeviceConstructorAcceptsMozaAb9Model</c>)
-/// plus three null-argument guards that exercise the constructor's <see cref="ArgumentNullException.ThrowIfNull"/> checks.
+/// Unit tests for <see cref="VorticeDirectInputDevice"/>. Covers the M5 constructor guards (plan §H tests
+/// 8/9/10 plus three null-argument guards) and the M6 <see cref="VorticeDirectInputDevice.ScaleDirection"/>
+/// helper (plan §H tests 11–16).
 /// </summary>
 /// <remarks>
-/// Behavioral coverage of <c>InitializeAsync</c>, <c>ExecuteAsync</c>, the dual-dictionary effect cache, and the
-/// re-acquire / re-download retry loop lands in M6–M9 with their own test files. M5 ships exactly the construction
-/// surface tests so each milestone has its own per-milestone hand-review pause.
+/// Behavioral coverage of <c>InitializeAsync</c>, <c>ExecuteAsync</c>, the dual-dictionary effect cache, and
+/// the re-acquire / re-download retry loop lands in M7–M9. Each milestone adds its surface to this file with
+/// its own per-milestone hand-review pause.
 /// </remarks>
 public sealed class VorticeDirectInputDeviceTests
 {
@@ -100,5 +99,65 @@ public sealed class VorticeDirectInputDeviceTests
 
         construct.Should().Throw<ArgumentNullException>()
             .Which.ParamName.Should().Be("logger");
+    }
+
+    // ── ScaleDirection helper (plan §H tests 11–16) ──────────────────────────────────────────
+
+    [Fact]
+    public void ScaleDirectionReturnsScaledIntsForNonZeroInput()
+    {
+        var (x, y) = VorticeDirectInputDevice.ScaleDirection(0.5, -0.5);
+
+        x.Should().Be(5000);
+        y.Should().Be(-5000);
+    }
+
+    [Fact]
+    public void ScaleDirectionReturnsLegacyDefaultForZeroZeroInput()
+    {
+        var (x, y) = VorticeDirectInputDevice.ScaleDirection(0.0, 0.0);
+
+        // The legacy DirectInputForceFeedbackDevice wrote the literal direction array {1, 1} for every
+        // effect. The (0,0) fallback preserves that exactly — note (1, 1), not (10000, 10000).
+        x.Should().Be(1);
+        y.Should().Be(1);
+    }
+
+    [Fact]
+    public void ScaleDirectionRoundsToNearestInt()
+    {
+        // 0.12346 * 10000 = 1234.6 -> rounds to 1235. The input is chosen clear of the .5 midpoint so the
+        // assertion is independent of Math.Round's MidpointRounding mode.
+        var (x, y) = VorticeDirectInputDevice.ScaleDirection(0.12346, 0.0);
+
+        x.Should().Be(1235);
+        y.Should().Be(0);
+    }
+
+    [Fact]
+    public void ScaleDirectionClampsValuesAboveOnePointZero()
+    {
+        var (x, y) = VorticeDirectInputDevice.ScaleDirection(1.5, 0.3);
+
+        x.Should().Be(10000);
+        y.Should().Be(3000);
+    }
+
+    [Fact]
+    public void ScaleDirectionClampsValuesBelowNegativeOnePointZero()
+    {
+        var (x, y) = VorticeDirectInputDevice.ScaleDirection(-2.0, 0.3);
+
+        x.Should().Be(-10000);
+        y.Should().Be(3000);
+    }
+
+    [Fact]
+    public void ScaleDirectionPreservesSignForNegativeValues()
+    {
+        var (x, y) = VorticeDirectInputDevice.ScaleDirection(-0.5, -0.25);
+
+        x.Should().Be(-5000);
+        y.Should().Be(-2500);
     }
 }
