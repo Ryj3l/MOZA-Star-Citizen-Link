@@ -787,4 +787,45 @@ public sealed class VorticeDirectInputDeviceTests
         effectMock.DidNotReceive().Download();
         device.DidNotReceive().Unacquire();
     }
+
+    // ── BuildEffectParameters flag/Axes pairing regression (Issue #26) ────────────────────────
+
+    [Fact]
+    public void BuildEffectParametersUsesObjectOffsetsFlagWithByteOffsetAxes()
+    {
+        // Issue #26: BuildEffectParameters previously declared EffectFlags.ObjectIds while passing
+        // byte-offset Axes values (DijofsX = 0, DijofsY = 4), producing DIERR_INVALIDPARAM at
+        // CreateEffect time on real AB9 hardware (M14, four reproducers on Test Quantum).
+        // The Periodic branch is the one M14 directly exercised on hardware.
+        var effect = AnEffect(
+            effectType: ForceEffectType.Periodic,
+            frequencyHz: 34.0,
+            duration: TimeSpan.FromSeconds(8));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        parameters.Flags.Should().HaveFlag(EffectFlags.Cartesian);
+        parameters.Flags.Should().HaveFlag(EffectFlags.ObjectOffsets);
+        parameters.Flags.Should().NotHaveFlag(EffectFlags.ObjectIds);
+        parameters.Axes.Should().Equal(JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY);
+    }
+
+    [Fact]
+    public void BuildEffectParametersConstantForceUsesObjectOffsetsFlag()
+    {
+        // Same flag-pairing invariant on the ConstantForce branch (Test Impact). BuildEffectParameters'
+        // EffectParameters return shape is shared across both EffectType branches (Periodic /
+        // ConstantForce), but explicit per-branch coverage matches Issue #26's per-effect-type
+        // acceptance-criteria framing and pins both paths against future regression.
+        var effect = AnEffect(
+            effectType: ForceEffectType.ConstantForce,
+            duration: TimeSpan.FromMilliseconds(120));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        parameters.Flags.Should().HaveFlag(EffectFlags.Cartesian);
+        parameters.Flags.Should().HaveFlag(EffectFlags.ObjectOffsets);
+        parameters.Flags.Should().NotHaveFlag(EffectFlags.ObjectIds);
+        parameters.Axes.Should().Equal(JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY);
+    }
 }

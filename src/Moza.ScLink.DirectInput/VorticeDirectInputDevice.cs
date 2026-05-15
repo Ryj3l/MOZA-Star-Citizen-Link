@@ -747,7 +747,7 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         return new EffectParameters
         {
-            Flags = EffectFlags.Cartesian | EffectFlags.ObjectIds,
+            Flags = EffectFlags.Cartesian | EffectFlags.ObjectOffsets,
             Duration = DurationToMicroseconds(effect.Duration),
             SamplePeriod = 0,
             Gain = NominalMaxGain,

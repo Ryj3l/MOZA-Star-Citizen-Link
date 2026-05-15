@@ -161,6 +161,13 @@ public sealed record DirectInputDeviceInfo(
 /// spec sample referenced them but they are not part of Vortice's public surface). The well-known
 /// DirectInput offsets are stable across SDK versions, so hardcoding them is preferable to inventing
 /// a wrapper enum.
+/// <para>
+/// When passed in <see cref="EffectParameters.Axes"/>, these offsets must be paired with the
+/// <see cref="EffectFlags.ObjectOffsets"/> flag (not <see cref="EffectFlags.ObjectIds"/>) so
+/// DirectInput interprets the array values as byte offsets rather than object identifiers.
+/// Mismatched pairing produces <c>DIERR_INVALIDPARAM</c> at <c>CreateEffect</c> time
+/// (Issue #26, surfaced in T-07 M14 hardware validation).
+/// </para>
 /// </remarks>
 public static class JoystickAxisOffsets
 {
