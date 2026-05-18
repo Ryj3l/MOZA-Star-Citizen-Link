@@ -219,4 +219,50 @@ public sealed class LegacyForceFeedbackDeviceAdapterTests
         logger.Entries.Should().BeEmpty();
         await device.Received(1).ExecuteAsync(Arg.Any<StopEffectCommand>(), Arg.Any<CancellationToken>());
     }
+
+    // ── StopAllAsync defensive-narrowing parity (Issue #27 Pass 1) ──────────────────────────────
+    // Restore symmetry with the existing StopAsync pair at lines 184/202: StopAllAsync gains the
+    // same catch-narrow contract, pinned by the same two-test shape — swallow a classified
+    // SharpGenException at Warning level; propagate every non-SharpGen exception with zero log
+    // entries (so a future widening to `catch (Exception)` lands red).
+
+    [Fact]
+    public async Task StopAllAsyncSwallowsClassifiedSharpGenException()
+    {
+        var device = ASubstituteDevice();
+        device
+            .When(d => d.StopAllAsync(Arg.Any<CancellationToken>()))
+            .Do(_ => throw ASharpGenException());
+        var logger = new RecordingLogger();
+        var adapter = AnAdapter(device, logger);
+
+        var act = async () => await adapter.StopAllAsync(CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        await device.Received(1).StopAllAsync(Arg.Any<CancellationToken>());
+        logger.Entries.Should().ContainSingle(level => level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task StopAllAsyncPropagatesNonClassifiedException()
+    {
+        // Mirrors StopAsyncPropagatesNonClassifiedException (line 202): only classified
+        // SharpGenException is swallowed; every other exception propagates. ObjectDisposedException
+        // is the realistic case — the wrapped VorticeDirectInputDevice.StopAllAsync throws exactly
+        // that from its post-dispose guard.
+        var device = ASubstituteDevice();
+        device
+            .When(d => d.StopAllAsync(Arg.Any<CancellationToken>()))
+            .Do(_ => throw new ObjectDisposedException("VorticeDirectInputDevice"));
+        var logger = new RecordingLogger();
+        var adapter = AnAdapter(device, logger);
+
+        var act = async () => await adapter.StopAllAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<ObjectDisposedException>();
+        // Zero log entries proves the SharpGenException catch did not consider this exception type —
+        // a catch widened to `catch (Exception)` would log here and fail this.
+        logger.Entries.Should().BeEmpty();
+        await device.Received(1).StopAllAsync(Arg.Any<CancellationToken>());
+    }
 }

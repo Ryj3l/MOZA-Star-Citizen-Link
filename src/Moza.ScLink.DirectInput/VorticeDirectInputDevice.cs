@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
+using SharpGen.Runtime;
 using Vortice.DirectInput;
 // Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect
 // (the legacy type is consumed only by DirectInputForceFeedbackDevice.cs, deleted in T-07 M12).
@@ -254,6 +255,41 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         public static void RedownloadCallThrew(ILogger logger, string operation, Exception exception)
             => _redownloadCallThrew(logger, operation, exception);
+
+        // ── Issue #27 Pass 1: HandleStopAllAsync defensive-narrowing log entries ──────────────
+        // Three dispositions for a classified SharpGenException on the device-wide StopAll call:
+        //   12 (Info)  — NeedsReacquire: device contended (e.g. Star Citizen exclusive-acquired)
+        //   13 (Info)  — Fatal/DEVICE_NOT_CONNECTED: cable unplugged, suspend/resume, etc.
+        //   14 (Warn)  — Fatal/other: preserves visibility on truly-unexpected DI failures
+        // The two Info entries are the shutdown-path-specific benign-on-disconnect-or-contention
+        // disposition; do NOT generalize them to other DI call sites.
+
+        private static readonly Action<ILogger, Exception?> _stopAllDeviceContended =
+            LoggerMessage.Define(
+                LogLevel.Information,
+                new EventId(12, nameof(StopAllDeviceContended)),
+                "DI StopAll: device contended (DIERR_NOTEXCLUSIVEACQUIRED); stop is a no-op");
+
+        public static void StopAllDeviceContended(ILogger logger, Exception exception)
+            => _stopAllDeviceContended(logger, exception);
+
+        private static readonly Action<ILogger, Exception?> _stopAllDeviceDisconnected =
+            LoggerMessage.Define(
+                LogLevel.Information,
+                new EventId(13, nameof(StopAllDeviceDisconnected)),
+                "DI StopAll: device disconnected (DEVICE_NOT_CONNECTED); stop is a no-op");
+
+        public static void StopAllDeviceDisconnected(ILogger logger, Exception exception)
+            => _stopAllDeviceDisconnected(logger, exception);
+
+        private static readonly Action<ILogger, int, Exception?> _stopAllDeviceCallFailed =
+            LoggerMessage.Define<int>(
+                LogLevel.Warning,
+                new EventId(14, nameof(StopAllDeviceCallFailed)),
+                "DI StopAll: device-wide stop call failed (HRESULT 0x{HResult:X8}); continuing");
+
+        public static void StopAllDeviceCallFailed(ILogger logger, int hresult, Exception exception)
+            => _stopAllDeviceCallFailed(logger, hresult, exception);
     }
 
     /// <inheritdoc />
@@ -270,7 +306,15 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
     /// (<see cref="ArgumentNullException"/>, <see cref="InvalidOperationException"/>,
     /// <see cref="ObjectDisposedException"/>, <see cref="OperationCanceledException"/> from a cancelled
     /// backoff delay, etc.) still propagate and fault the Task. The Stop paths are deliberately not routed
-    /// through the retry wrapper — emergency stop is fast-fail-fast.
+    /// through the retry wrapper — emergency stop is fast-fail-fast — <b>but</b> the device-wide
+    /// <see cref="ForceFeedbackCommand.StopAll"/> call issued by <c>HandleStopAllAsync</c> is narrowly
+    /// defensive against <see cref="DirectInputErrorClass.NeedsReacquire"/> and the Fatal-class
+    /// <c>DEVICE_NOT_CONNECTED</c> HRESULT (Issue #27 Pass 1) — both mean "no device to stop" rather
+    /// than "stop failed", and are swallowed at Information level rather than letting the
+    /// <c>FallbackForceFeedbackDevice</c> outer catch render them as error-styled "stop all failed"
+    /// entries. Other classified Fatal HRESULTs at that one call site still land at Warning to preserve
+    /// diagnostic visibility. The catch is <see cref="SharpGen.Runtime.SharpGenException"/>-specific —
+    /// non-classified exceptions still propagate from <c>StopAll</c> exactly as from the per-effect Stop.
     /// </remarks>
     public Task ExecuteAsync(ForceCommand command, CancellationToken cancellationToken)
     {
@@ -420,6 +464,27 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
     /// issues a device-wide <see cref="ForceFeedbackCommand.StopAll"/>. Effects stay in
     /// <see cref="_effectCache"/> for reuse / disposal — only the active index is cleared.
     /// </summary>
+    /// <remarks>
+    /// Two defensive shapes, deliberately asymmetric — do not collapse:
+    /// <list type="bullet">
+    /// <item>
+    /// The per-effect <see cref="IDirectInputEffectAbstraction.Stop"/> loop catches <see cref="Exception"/>
+    /// broadly and logs at Warning (<c>Log.StopAllEffectFailed</c>): one effect failing must not block the
+    /// remaining effects or the device-wide StopAll below. M9 fast-fail-fast applies — no retry, no
+    /// classification.
+    /// </item>
+    /// <item>
+    /// The terminal <see cref="ForceFeedbackCommand.StopAll"/> call is wrapped in a
+    /// <see cref="SharpGen.Runtime.SharpGenException"/>-specific catch (Issue #27 Pass 1). Classifies via
+    /// <see cref="DirectInputErrorClassifier"/>; <see cref="DirectInputErrorClass.NeedsReacquire"/> and
+    /// the Fatal-class <c>DEVICE_NOT_CONNECTED</c> HRESULT are dispositioned as benign "no device to stop"
+    /// at Information level (EventIds 12 / 13); other Fatal HRESULTs land at Warning (EventId 14);
+    /// non-classified exceptions still propagate.
+    /// </item>
+    /// </list>
+    /// Do NOT bare-restore the device-wide call by reading the per-effect-loop comment as authoritative
+    /// for the whole method — the per-effect catch protects the loop, not the terminal call.
+    /// </remarks>
     private Task HandleStopAllAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -446,7 +511,44 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         // Hardware-level guarantee. _device is nullable; an emergency stop with no acquired device is a
         // benign no-op (null-conditional, lenient).
-        _device?.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll);
+        //
+        // Issue #27 Pass 1: narrow defensive catch. The device-wide StopAll is the one stop-path call
+        // that legitimately encounters classified DirectInput failures on real hardware — both
+        // DIERR_NOTEXCLUSIVEACQUIRED (Star Citizen exclusive-acquired the same device mid-runtime)
+        // and DEVICE_NOT_CONNECTED (cable unplugged before shutdown). Both mean "no device to stop"
+        // rather than "stop failed"; we discriminate by HRESULT at the catch site and log at
+        // Information level rather than letting the FallbackForceFeedbackDevice outer catch render
+        // them as error-styled "stop all failed" entries. Other Fatal HRESULTs land at Warning to
+        // preserve diagnostic visibility. The catch is SharpGenException-specific, NOT Exception —
+        // non-classified failures (e.g. programmer-error InvalidOperationException) still propagate
+        // by design, per the M9 contract documented on ExecuteAsync.
+        try
+        {
+            _device?.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll);
+        }
+        catch (SharpGenException ex)
+        {
+            switch (DirectInputErrorClassifier.Classify(ex))
+            {
+                case DirectInputErrorClass.NeedsReacquire:
+                    Log.StopAllDeviceContended(_logger, ex);
+                    break;
+                default:
+                    // Default arm covers Fatal (and the unreachable Transient / NeedsRedownload —
+                    // SendForceFeedbackCommand(StopAll) doesn't raise those classifications, but the
+                    // switch must be total under WarningLevel 5). Within Fatal, discriminate
+                    // DEVICE_NOT_CONNECTED by raw HRESULT for the benign-on-disconnect disposition.
+                    if (ex.ResultCode.Code == DirectInputErrorClassifier.HResults.DeviceNotConnected)
+                    {
+                        Log.StopAllDeviceDisconnected(_logger, ex);
+                    }
+                    else
+                    {
+                        Log.StopAllDeviceCallFailed(_logger, ex.ResultCode.Code, ex);
+                    }
+                    break;
+            }
+        }
 
         return Task.CompletedTask;
     }

@@ -53,6 +53,17 @@ public static class DirectInputErrorClassifier
         public const int DierrNotExclusiveAcquired = unchecked((int)0x80040205);
         public const int DierrNotDownloaded = unchecked((int)0x80040203);
         public const int DierrEffectPlaying = unchecked((int)0x80040208);
+
+        /// <summary>
+        /// Win32 <c>ERROR_DEVICE_NOT_CONNECTED</c> surfaced through Vortice on a stop-path call against
+        /// a device whose USB handle has been invalidated (cable unplug, suspend/resume). Not a
+        /// <c>DIERR_*</c> code — it predates DirectInput's own error space — so it continues to be
+        /// classified as <see cref="DirectInputErrorClass.Fatal"/> via the <c>ClassifyByHResult</c>
+        /// default arm. The constant exists so <c>HandleStopAllAsync</c> (Issue #27 Pass 1) and its
+        /// regression tests can discriminate this specific Fatal HRESULT by name and dispose of it as
+        /// "no device to stop" at Information level, rather than as a generic Warning-level failure.
+        /// </summary>
+        public const int DeviceNotConnected = unchecked((int)0x8007048F);
     }
 
     /// <summary>Classifies an exception into a <see cref="DirectInputErrorClass"/> via the three-tier fallback.</summary>

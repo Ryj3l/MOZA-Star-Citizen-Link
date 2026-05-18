@@ -159,13 +159,35 @@ public sealed class LegacyForceFeedbackDeviceAdapter : Moza.ScLink.Core.IForceFe
     }
 
     /// <summary>
-    /// Stops all active effects. Direct delegation to
-    /// <see cref="Moza.ScLink.Core.Devices.IForceFeedbackDevice.StopAllAsync"/> — the new device's
-    /// <c>StopAllAsync</c> entry point and its <c>StopAllCommand</c> dispatch arm funnel to the identical
-    /// handler, so no command fabrication is needed here.
+    /// Stops all active effects on the wrapped device. The new device's <c>StopAllAsync</c> entry point
+    /// and its <c>StopAllCommand</c> dispatch arm funnel to the identical handler, so no command
+    /// fabrication is needed here — the call is a thin pass-through plus a defensive narrow catch.
     /// </summary>
-    public Task StopAllAsync(CancellationToken cancellationToken) =>
-        _device.StopAllAsync(cancellationToken);
+    /// <remarks>
+    /// Stop-all-path exception contract: mirrors <see cref="StopAsync"/> at the single-effect layer
+    /// (Issue #27 Pass 1). Catches <b>only</b> a classified <see cref="SharpGenException"/> — the type
+    /// the M9 stop path raises on a classified DirectInput failure — logs a Warning, and returns.
+    /// <see cref="ObjectDisposedException"/>, <see cref="OperationCanceledException"/>,
+    /// <see cref="ArgumentNullException"/>, and every other non-classified exception propagate, matching
+    /// the M8/M9 fast-fail-fast stop contract. The <c>await</c> is inside the <c>try</c> so the catch is
+    /// robust whether the wrapped device throws synchronously or via a faulted task.
+    /// <para/>
+    /// Restores in-class symmetry: prior to Pass 1, single-effect <see cref="StopAsync"/> caught a
+    /// classified failure while stop-all leaked it as a faulted Task — adapters above the
+    /// <c>FallbackForceFeedbackDevice</c> outer catch never saw the discriminated disposition. Pass 1
+    /// pairs them.
+    /// </remarks>
+    public async Task StopAllAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _device.StopAllAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (SharpGenException ex)
+        {
+            Log.StopAllSwallowedClassifiedFailure(_logger, ex);
+        }
+    }
 
     private static NewForceEffect TranslateEffect(LegacyForceEffect legacy) => new()
     {
@@ -207,5 +229,21 @@ public sealed class LegacyForceFeedbackDeviceAdapter : Moza.ScLink.Core.IForceFe
 
         public static void StopSwallowedClassifiedFailure(ILogger logger, string stateKey, Exception exception)
             => _stopSwallowedClassifiedFailure(logger, stateKey, exception);
+
+        // ── Issue #27 Pass 1: StopAllAsync symmetry restoration ───────────────────────────────
+        // Paired with StopSwallowedClassifiedFailure above. No StateKey parameter — StopAll is
+        // device-wide, not per-effect. Same Warning level as the single-effect entry: a classified
+        // failure at this layer always indicates the wrapped device's M9 path emitted a faulted Task
+        // we discriminated as benign, but Warning preserves traceability up through the host's log
+        // pipeline.
+
+        private static readonly Action<ILogger, Exception?> _stopAllSwallowedClassifiedFailure =
+            LoggerMessage.Define(
+                LogLevel.Warning,
+                new EventId(2, nameof(StopAllSwallowedClassifiedFailure)),
+                "Legacy adapter swallowed a classified DirectInput failure stopping all effects");
+
+        public static void StopAllSwallowedClassifiedFailure(ILogger logger, Exception exception)
+            => _stopAllSwallowedClassifiedFailure(logger, exception);
     }
 }
