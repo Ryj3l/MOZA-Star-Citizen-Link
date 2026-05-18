@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using Moza.ScLink.App.ForceFeedback;
+using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Models;
 using Moza.ScLink.Diagnostics;
@@ -24,14 +25,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private GameLogTailer? _tailer;
     private string _gameLogPath = string.Empty;
     private string _status = "Ready.";
+    private string _outputName = string.Empty;
+    private string _outputStatus = string.Empty;
     private bool _isMonitoring;
     private bool _isStarting;
     private long _logLinesRead;
     private long _logEventsMatched;
 
     public MainViewModel()
+        : this(new ForceFeedbackController(ForceFeedbackDeviceFactory.Create())) { }
+
+    // T-07 Issue #27 Pass-2 S2: internal injection ctor for App.Tests' D4 reactivity tests.
+    // App's AssemblyInfo.cs grants InternalsVisibleTo("Moza.ScLink.App.Tests") so the test
+    // project can compose MainViewModel with a pre-built controller. Test-only ctors are
+    // internal + IVT, not public — keeps the production public surface honest.
+    internal MainViewModel(ForceFeedbackController feedback)
     {
-        _feedback = new ForceFeedbackController(ForceFeedbackDeviceFactory.Create());
+        _feedback = feedback;
 
         AutoDetectCommand = new RelayCommand(_ => AutoDetectAsync());
         BrowseCommand = new RelayCommand(_ => BrowseAsync());
@@ -44,6 +54,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         OutputName = _feedback.OutputName;
         OutputStatus = _feedback.OutputStatus;
+        _feedback.ChainStateChanged += OnChainStateChanged;
         LoadInitialPath();
         RefreshDiagnostics(includeExtendedDiagnostics: false);
     }
@@ -80,9 +91,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string OutputName { get; }
+    public string OutputName
+    {
+        get => _outputName;
+        private set => SetField(ref _outputName, value);
+    }
 
-    public string OutputStatus { get; }
+    public string OutputStatus
+    {
+        get => _outputStatus;
+        private set => SetField(ref _outputStatus, value);
+    }
+
+    /// <summary>
+    /// Passthrough of the underlying chain's
+    /// <see cref="Moza.ScLink.Core.Devices.IDeviceAvailabilityObserver"/> when the chain implements
+    /// it; null otherwise. <c>MainWindow.OnWindowMessage</c> (B6) reads this to route WM_DEVICECHANGE
+    /// events into the chain's hot-plug re-selection.
+    /// </summary>
+    public IDeviceAvailabilityObserver? DeviceAvailabilityObserver => _feedback.DeviceAvailabilityObserver;
 
     public ObservableCollection<string> Events { get; } = [];
 
@@ -409,6 +436,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Status = "Game.log was not auto-detected. Use Browse once if Star Citizen is installed in a custom folder.";
     }
 
+    private void OnChainStateChanged(object? sender, ChainStateChangedEventArgs e)
+    {
+        Dispatch(() =>
+        {
+            OutputName = e.OutputName;
+            OutputStatus = e.OutputStatus;
+            AppLog.Write(e.IsReady
+                ? $"Device available: {e.OutputName}"
+                : $"Device lost — entering preview mode: {e.OutputName}");
+        });
+    }
+
     private static void Dispatch(Action action)
     {
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
@@ -528,6 +567,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _feedback.ChainStateChanged -= OnChainStateChanged;
         _ = StopAsync();
     }
 }

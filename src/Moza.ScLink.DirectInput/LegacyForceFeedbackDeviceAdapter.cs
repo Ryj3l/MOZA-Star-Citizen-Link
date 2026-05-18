@@ -18,13 +18,19 @@ namespace Moza.ScLink.DirectInput;
 /// <remarks>
 /// The adapter does <b>not</b> own the wrapped device's lifetime: it is deliberately not
 /// <see cref="IAsyncDisposable"/>, matching the legacy <c>DirectInputForceFeedbackDevice</c>, which was
-/// process-lifetime-scoped and never disposed. Real lifetime management arrives with the T-10/T-14
-/// channels-based pipeline, which also deletes this adapter (deletion tracked in issue #15).
+/// process-lifetime-scoped and never disposed. T-07 Issue #27 Pass-2 adds chain-owned disposal via
+/// <see cref="IDirectInputAdapterSlot.DisposeWrappedAsync"/>:
+/// <see cref="FallbackForceFeedbackDevice"/> calls into the adapter on DBT_DEVICEREMOVECOMPLETE
+/// (hot-removal) and on double-arrival teardown-then-replace. The adapter owns the disposal
+/// mechanics; the chain owns the timing. Real broader lifetime management arrives with the
+/// T-10/T-14 channels-based pipeline, which also deletes this adapter and the
+/// <see cref="IDirectInputAdapterSlot"/> interface (deletion tracked in issue #15).
 /// <see cref="EffectCategory"/> assignment is likewise deferred — see issue #21 and the
 /// <see cref="PlayAsync"/> remarks.
 /// </remarks>
 [Obsolete("Transitional adapter. Delete in T-10/T-14 when ForceFeedbackController is replaced by the channels-based pipeline.")]
-public sealed class LegacyForceFeedbackDeviceAdapter : Moza.ScLink.Core.IForceFeedbackDevice
+public sealed class LegacyForceFeedbackDeviceAdapter
+    : Moza.ScLink.Core.IForceFeedbackDevice, IDirectInputAdapterSlot
 {
     private readonly NewDevice _device;
     private readonly ILogger<LegacyForceFeedbackDeviceAdapter> _logger;
@@ -188,6 +194,13 @@ public sealed class LegacyForceFeedbackDeviceAdapter : Moza.ScLink.Core.IForceFe
             Log.StopAllSwallowedClassifiedFailure(_logger, ex);
         }
     }
+
+    /// <summary>
+    /// Disposes the wrapped DirectInput device. Called by the chain on hot-loss
+    /// (DBT_DEVICEREMOVECOMPLETE) and on double-arrival teardown-then-replace; the chain owns
+    /// the timing, the adapter owns the mechanics (reaching <see cref="_device"/>).
+    /// </summary>
+    public ValueTask DisposeWrappedAsync() => _device.DisposeAsync();
 
     private static NewForceEffect TranslateEffect(LegacyForceEffect legacy) => new()
     {

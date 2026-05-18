@@ -36,7 +36,8 @@ public static class ForceFeedbackDeviceFactory
         switch (outputMode)
         {
             case ForceFeedbackOutputMode.DirectInput:
-                AddIfPresent(devices, directInput);
+                // T-07 Issue #27 Pass-2 C-fix: DI tier passed separately to FallbackForceFeedbackDevice ctor
+                // (single source of truth for the hot-pluggable slot). NOT added to the secondary tiers list.
                 break;
             case ForceFeedbackOutputMode.MozaSdk:
                 AddIfPresent(devices, managedSdk);
@@ -47,7 +48,7 @@ public static class ForceFeedbackDeviceFactory
             case ForceFeedbackOutputMode.Preview:
                 break;
             default:
-                AddIfPresent(devices, directInput);
+                // DI tier passed separately to ctor (see DirectInput case).
                 AddIfPresent(devices, bridge);
                 AddIfPresent(devices, managedSdk);
                 break;
@@ -55,7 +56,19 @@ public static class ForceFeedbackDeviceFactory
 
         devices.Add(new NullForceFeedbackDevice($"Output mode '{outputMode}' had no working hardware output. Effects are logged for parser validation."));
 
-        return new FallbackForceFeedbackDevice(devices);
+        // T-07 Issue #27 Pass-2 (B7): inject the re-creation delegate so the chain can re-attempt
+        // DirectInput acquisition on DBT_DEVICEARRIVAL. Mode-conditional — only DirectInput/Auto
+        // modes are hot-plug-eligible; SDK / Preview / NativeBridge modes pass () => null so the
+        // chain's OnDeviceArrived path is a no-op (Policy 3 DI-scope). The closure captures
+        // CreateDirectInputDevice via method reference — no factory-state leakage; the cached
+        // _directInputAbstraction is shared across calls (correct: process-lifetime per its
+        // declaration comment).
+        Func<IForceFeedbackDevice?> directInputProvider =
+            outputMode is ForceFeedbackOutputMode.DirectInput or ForceFeedbackOutputMode.Auto
+                ? CreateDirectInputDevice
+                : () => null;
+
+        return new FallbackForceFeedbackDevice(devices, directInputProvider, initialDirectInputSlot: directInput);
     }
 
     // Replaces the legacy DirectInputForceFeedbackDevice.CreateIfAvailable(). Enumerates DirectInput
