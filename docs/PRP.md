@@ -252,6 +252,8 @@ Every new dependency requires a Dependency Decision Record (DDR) committed to `d
 | `Serilog.Settings.Configuration` | 9.x | Apache-2.0 | App |
 | `Microsoft.Extensions.Hosting` | 8.x | MIT | App (background services) |
 | `Microsoft.Extensions.DependencyInjection` | 8.x | MIT | App, all projects |
+| `Microsoft.Extensions.Logging` | 8.x | MIT | App, all projects — core Phase-1 logging stack |
+| `Microsoft.Extensions.Logging.Abstractions` | 8.0.x | MIT | DirectInput, test projects — abstractions-sister of Microsoft.Extensions.Logging; interface-only, no independent decision |
 | `Vortice.DirectInput` | latest stable | MIT | DirectInput |
 | `System.Text.Json` | 8.x (in-box) | MIT | Core, Profiles |
 | `xunit` | 2.x | Apache-2.0 | All test projects |
