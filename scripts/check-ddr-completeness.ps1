@@ -31,6 +31,7 @@ $preApprovedPackages = @(
     "Microsoft.Extensions.Configuration",
     "Microsoft.Extensions.Configuration.Json",
     "Microsoft.Extensions.Logging",
+    "Microsoft.Extensions.Logging.Abstractions",
     "Microsoft.CodeAnalysis.BannedApiAnalyzers",
     "Microsoft.CodeAnalysis.NetAnalyzers",
     "Microsoft.NET.Test.Sdk",
