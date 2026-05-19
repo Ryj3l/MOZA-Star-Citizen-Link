@@ -1,6 +1,6 @@
 using System.IO;
 using Moza.ScLink.Core;
-using Moza.ScLink.DirectInput.Native;
+using Moza.ScLink.DirectInput;
 
 namespace Moza.ScLink.Diagnostics;
 
@@ -35,8 +35,9 @@ public static class ForceFeedbackDiagnostics
 
         try
         {
-            var controllers = DirectInputNative.EnumerateGameControllers();
-            var forceFeedbackDevices = DirectInputNative.EnumerateForceFeedbackDevices();
+            using var abstraction = new VorticeDirectInputAdapter();
+            var controllers = abstraction.EnumerateAllGameControllers();
+            var forceFeedbackDevices = abstraction.EnumerateForceFeedbackDevices();
             var forceFeedbackIds = forceFeedbackDevices
                 .Select(d => d.InstanceGuid)
                 .ToHashSet();

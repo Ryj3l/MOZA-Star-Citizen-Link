@@ -76,11 +76,11 @@ $bannedPatterns = @(
     # still exist in the legacy files and in ForceFeedbackDeviceFactory.cs
     # during the migration window.
     # ============================================================
-    # @{ Pattern = '\bDirectInputForceFeedbackDevice\b'; Reason = 'Replaced by VorticeDirectInputDevice in T-07. Old hand-rolled COM-interop class is deleted.' }
-    # @{ Pattern = '\bDirectInputNative\b'; Reason = 'Replaced by VorticeDirectInputAdapter in T-07. Hand-rolled P/Invoke surface is deleted.' }
-    # @{ Pattern = '\bDirectInputComInterfaces\b'; Reason = 'Replaced by Vortice.DirectInput managed wrappers in T-07. ComImport interface declarations are deleted.' }
-    # @{ Pattern = '\bDirectInputStructures\b'; Reason = 'Replaced by Vortice.DirectInput typed structs in T-07. Hand-rolled marshalable structs are deleted.' }
-    # @{ Pattern = '\bDirectInputConstants\b'; Reason = 'Replaced by Vortice.DirectInput typed enums and constants in T-07. Hand-rolled constants are deleted.' }
+    @{ Pattern = '\bDirectInputForceFeedbackDevice\b'; Reason = 'Replaced by VorticeDirectInputDevice in T-07. Old hand-rolled COM-interop class is deleted.'; CodeOnly = $true }
+    @{ Pattern = '\bDirectInputNative\b'; Reason = 'Replaced by VorticeDirectInputAdapter in T-07. Hand-rolled P/Invoke surface is deleted.'; CodeOnly = $true }
+    @{ Pattern = '\bDirectInputComInterfaces\b'; Reason = 'Replaced by Vortice.DirectInput managed wrappers in T-07. ComImport interface declarations are deleted.'; CodeOnly = $true }
+    @{ Pattern = '\bDirectInputStructures\b'; Reason = 'Replaced by Vortice.DirectInput typed structs in T-07. Hand-rolled marshalable structs are deleted.'; CodeOnly = $true }
+    @{ Pattern = '\bDirectInputConstants\b'; Reason = 'Replaced by Vortice.DirectInput typed enums and constants in T-07. Hand-rolled constants are deleted.'; CodeOnly = $true }
 )
 
 $violations = @()
@@ -103,10 +103,25 @@ foreach ($includePattern in $includePatterns) {
         $content = Get-Content -Path $fullName -Raw -ErrorAction SilentlyContinue
         if (-not $content) { return }
 
+        # CodeOnly patterns (deleted-identifier bans) must match live code only,
+        # not prose in comments. Blank comments length-preserving so match
+        # indices still map to original line numbers. The '//' pass also blanks
+        # '///' XML-doc comments, which is intended — most provenance tokens
+        # live in XML docs. Broad-spectrum patterns (SharpDX, P/Invoke,
+        # Newtonsoft) keep full comment/string coverage by matching $content
+        # directly. The blanking is deliberately approximate: it also blanks
+        # '//' and '/* */' sequences inside string literals (PowerShell regex
+        # does not track lexical context) — an acceptable false-negative for
+        # identifier bans, verified zero-impact for the staged T-07 names (no
+        # string-literal occurrences in the repo).
+        $codeText = [regex]::Replace($content, '(?m)//.*$', { param($x) ' ' * $x.Value.Length })
+        $codeText = [regex]::Replace($codeText, '(?s)/\*.*?\*/', { param($x) $x.Value -replace '[^\r\n]', ' ' })
+
         foreach ($rule in $bannedPatterns) {
-            $matches = [regex]::Matches($content, $rule.Pattern)
+            $scanText = if ($rule.CodeOnly) { $codeText } else { $content }
+            $matches = [regex]::Matches($scanText, $rule.Pattern)
             foreach ($m in $matches) {
-                # Compute line number
+                # Compute line number (indices align — blanking is length-preserving)
                 $lineNumber = ($content.Substring(0, $m.Index) -split "`n").Count
                 $violations += [PSCustomObject]@{
                     File    = $fullName.Substring($RepoRoot.Length).TrimStart('\','/')

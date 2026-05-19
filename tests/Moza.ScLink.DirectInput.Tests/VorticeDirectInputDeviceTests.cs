@@ -486,6 +486,7 @@ public sealed class VorticeDirectInputDeviceTests
     private const int HrNotExclusiveAcquired = unchecked((int)0x80040205);
     private const int HrNotDownloaded = unchecked((int)0x80040203);
     private const int HrEffectPlaying = unchecked((int)0x80040208);
+    private const int HrDeviceNotConnected = unchecked((int)0x8007048F);
 
     private static SharpGenException ASharpGenException(int hresult, string message = "DI test failure") =>
         new(new Result(hresult), message, innerException: null);
@@ -786,5 +787,120 @@ public sealed class VorticeDirectInputDeviceTests
         effectMock.Received(1).Start(1, EffectPlayFlags.None);
         effectMock.DidNotReceive().Download();
         device.DidNotReceive().Unacquire();
+    }
+
+    // ── BuildEffectParameters flag/Axes pairing regression (Issue #26) ────────────────────────
+
+    [Fact]
+    public void BuildEffectParametersUsesObjectOffsetsFlagWithByteOffsetAxes()
+    {
+        // Issue #26: BuildEffectParameters previously declared EffectFlags.ObjectIds while passing
+        // byte-offset Axes values (DijofsX = 0, DijofsY = 4), producing DIERR_INVALIDPARAM at
+        // CreateEffect time on real AB9 hardware (M14, four reproducers on Test Quantum).
+        // The Periodic branch is the one M14 directly exercised on hardware.
+        var effect = AnEffect(
+            effectType: ForceEffectType.Periodic,
+            frequencyHz: 34.0,
+            duration: TimeSpan.FromSeconds(8));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        parameters.Flags.Should().HaveFlag(EffectFlags.Cartesian);
+        parameters.Flags.Should().HaveFlag(EffectFlags.ObjectOffsets);
+        parameters.Flags.Should().NotHaveFlag(EffectFlags.ObjectIds);
+        parameters.Axes.Should().Equal(JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY);
+    }
+
+    [Fact]
+    public void BuildEffectParametersConstantForceUsesObjectOffsetsFlag()
+    {
+        // Same flag-pairing invariant on the ConstantForce branch (Test Impact). BuildEffectParameters'
+        // EffectParameters return shape is shared across both EffectType branches (Periodic /
+        // ConstantForce), but explicit per-branch coverage matches Issue #26's per-effect-type
+        // acceptance-criteria framing and pins both paths against future regression.
+        var effect = AnEffect(
+            effectType: ForceEffectType.ConstantForce,
+            duration: TimeSpan.FromMilliseconds(120));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        parameters.Flags.Should().HaveFlag(EffectFlags.Cartesian);
+        parameters.Flags.Should().HaveFlag(EffectFlags.ObjectOffsets);
+        parameters.Flags.Should().NotHaveFlag(EffectFlags.ObjectIds);
+        parameters.Axes.Should().Equal(JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY);
+    }
+
+    // ── HandleStopAllAsync defensive-narrowing regression (Issue #27 Pass 1) ───────────────────
+    // Three tests pinning the device-level catch around _device?.SendForceFeedbackCommand(StopAll)
+    // at HandleStopAllAsync line 449:
+    //   1. classified NeedsReacquire (0x80040205) is swallowed and logged at Information level
+    //      ("device contended; stop is a no-op");
+    //   2. classified-Fatal DEVICE_NOT_CONNECTED (0x8007048F — discriminated at the catch site by
+    //      raw HRESULT value, NOT a new classification class per plan D1's locked design call) is
+    //      swallowed and logged at Information level ("device disconnected; stop is a no-op");
+    //   3. non-SharpGenException exceptions propagate — the narrow catch must NOT widen to
+    //      `catch (Exception)`, which would mask programmer-error shapes like InvalidOperationException.
+    // The narrow catch sits at the call site rather than the FallbackForceFeedbackDevice
+    // orchestration-level catch so HRESULT classification can produce shutdown-appropriate log
+    // levels instead of the error-styled "DI...stop all failed" tone the fallback-level catch emits.
+
+    [Fact]
+    public async Task StopAllSwallowsNotExclusiveAcquiredWithoutRethrow()
+    {
+        var recordingLogger = new RecordingLogger();
+        var (sut, _, device) = await AnInitializedSutAsync(logger: recordingLogger);
+        // InitializeAsync emitted one Information entry (DeviceInitialized). Clear so the post-stop
+        // assertion expresses "the stop call logged exactly one Information entry" directly, rather
+        // than "init + stop together logged exactly two".
+        recordingLogger.Entries.Clear();
+        device
+            .When(d => d.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll))
+            .Do(_ => throw ASharpGenException(HrNotExclusiveAcquired));
+
+        var act = async () => await sut.StopAllAsync(CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        recordingLogger.Entries.Should().ContainSingle().Which.Should().Be(LogLevel.Information);
+    }
+
+    [Fact]
+    public async Task StopAllSwallowsDeviceNotConnectedWithoutRethrow()
+    {
+        // The classifier returns Fatal for 0x8007048F via its default arm — DEVICE_NOT_CONNECTED is
+        // not in the recognized DIERR_* set. The catch site at HandleStopAllAsync line 449
+        // discriminates by raw HRESULT value to produce the "device disconnected; stop is a no-op"
+        // Information disposition instead of the other-Fatal Warning disposition.
+        var recordingLogger = new RecordingLogger();
+        var (sut, _, device) = await AnInitializedSutAsync(logger: recordingLogger);
+        recordingLogger.Entries.Clear();
+        device
+            .When(d => d.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll))
+            .Do(_ => throw ASharpGenException(HrDeviceNotConnected));
+
+        var act = async () => await sut.StopAllAsync(CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+        recordingLogger.Entries.Should().ContainSingle().Which.Should().Be(LogLevel.Information);
+    }
+
+    [Fact]
+    public async Task StopAllRethrowsUnclassifiedException()
+    {
+        // The other half of the contract: catch (SharpGenException), NOT catch (Exception). A
+        // genuine programmer error (e.g., InvalidOperationException) must propagate so it surfaces
+        // rather than being swallowed as if it were a benign DirectInput failure. Zero post-clear
+        // log entries proves the narrow catch did not even consider this exception type — a widened
+        // catch would log here and fail this assertion.
+        var recordingLogger = new RecordingLogger();
+        var (sut, _, device) = await AnInitializedSutAsync(logger: recordingLogger);
+        recordingLogger.Entries.Clear();
+        device
+            .When(d => d.SendForceFeedbackCommand(ForceFeedbackCommand.StopAll))
+            .Do(_ => throw new InvalidOperationException("programmer error"));
+
+        var act = async () => await sut.StopAllAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        recordingLogger.Entries.Should().BeEmpty();
     }
 }
