@@ -138,7 +138,7 @@ public interface IDirectInputEffectAbstraction : IDisposable
 
 /// <summary>
 /// Lightweight POCO describing a DirectInput device. Produced by <see cref="IDirectInputAbstraction"/>
-/// enumeration; consumed by <c>DeviceClassifier</c>, the App factory, and Diagnostics.
+/// enumeration; consumed by <c>DeviceDetector</c>/<c>DeviceAllowlist</c>, the App factory, and Diagnostics.
 /// Public surface (not internal) so <c>Moza.ScLink.Diagnostics.ForceFeedbackDiagnostics</c> can consume it
 /// without an <c>InternalsVisibleTo</c> declaration.
 /// </summary>

@@ -15,4 +15,11 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Canonical allowlist lives at src/device-allowlist.json (CLAUDE.md rule #8; verify-setup.ps1).
+         Linked-copy mirrors the Patterns/v0.json precedent (Moza.ScLink.Logs.csproj) so the file lands
+         at output root and flows transitively into the App bin for AppContext.BaseDirectory loading. -->
+    <None Include="..\device-allowlist.json" Link="device-allowlist.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
