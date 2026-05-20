@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
-$project = Join-Path $root "src\MozaStarCitizen.App\MozaStarCitizen.App.csproj"
+$project = Join-Path $root "src\Moza.ScLink.App\Moza.ScLink.App.csproj"
 $publishRoot = Join-Path $root "artifacts\publish"
 $stamp = Get-Date -Format "yyyyMMddHHmmss"
 $publishDir = Join-Path $publishRoot "MozaStarCitizen-$Runtime-$stamp"
@@ -28,8 +28,8 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE"
 }
 
-if (-not (Test-Path (Join-Path $publishDir "MozaStarCitizen.exe"))) {
-    throw "Publish completed, but MozaStarCitizen.exe was not produced."
+if (-not (Test-Path (Join-Path $publishDir "Moza.ScLink.App.exe"))) {
+    throw "Publish completed, but Moza.ScLink.App.exe was not produced."
 }
 
 Get-ChildItem $publishDir -Filter "*.pdb" -File | Remove-Item -Force
@@ -64,7 +64,7 @@ function Write-Launcher {
         $lines += "set $entry"
     }
     $lines += @(
-        "start """" ""%~dp0MozaStarCitizen.exe"""
+        "start """" ""%~dp0Moza.ScLink.App.exe"""
     )
     Set-Content -Path (Join-Path $publishDir $Name) -Value $lines -Encoding ASCII
 }
