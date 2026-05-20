@@ -1,7 +1,10 @@
 using System.Globalization;
 using System.IO;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Moza.ScLink.App.Bus;
+using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Diagnostics;
 using Serilog;
 
@@ -66,6 +69,15 @@ public static class Program
                 }
 
                 cfg.AddCommandLine(args);
+            })
+            .ConfigureServices((_, services) =>
+            {
+                // PRP §2.7 event pipeline + its drop-rate monitor. Registered here, but the generic host
+                // is built-not-started (see Main: `using var host = ...Build()`, no StartAsync), so these
+                // are DORMANT until host-start is wired — tracked in issue #43. Nothing consumes IEventBus
+                // until T-11/T-12/T-16, so the inert registration is correct and forward-looking.
+                services.AddSingleton<IEventBus, EventBus>();
+                services.AddHostedService<DropRateMonitor>();
             })
             .UseSerilog((ctx, services, cfg) =>
             {
