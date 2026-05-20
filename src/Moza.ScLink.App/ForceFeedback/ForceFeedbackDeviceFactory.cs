@@ -24,6 +24,10 @@ public static class ForceFeedbackDeviceFactory
     // InitializeAsync, so it must outlive Create().
     private static VorticeDirectInputAdapter? _directInputAbstraction;
 
+    // Loaded once from device-allowlist.json (beside the executable) and reused for the app lifetime —
+    // read-only config, no per-call reload needed. Mirrors the _directInputAbstraction caching above.
+    private static DeviceAllowlist? _allowlist;
+
     public static IForceFeedbackDevice Create()
     {
         var outputMode = ParseOutputMode(Environment.GetEnvironmentVariable("MOZA_SC_OUTPUT"));
@@ -72,16 +76,17 @@ public static class ForceFeedbackDeviceFactory
     }
 
     // Replaces the legacy DirectInputForceFeedbackDevice.CreateIfAvailable(). Enumerates DirectInput
-    // force-feedback devices through the Vortice abstraction, classifies each by product name, and
-    // wraps the first allowlisted device as LegacyForceFeedbackDeviceAdapter(new VorticeDirectInputDevice(...)).
+    // force-feedback devices through the Vortice abstraction, classifies each against the
+    // device-allowlist.json-driven DeviceAllowlist (via DeviceDetector), and wraps the first
+    // allowlisted device as LegacyForceFeedbackDeviceAdapter(new VorticeDirectInputDevice(...)).
     // Returns null when nothing is allowlisted or enumeration fails — the caller falls through to the
     // Null device, exactly as the legacy CreateIfAvailable() did.
     //
-    // CS0618: DeviceClassifier and LegacyForceFeedbackDeviceAdapter are [Obsolete] transitional types;
-    // the factory is their intended consumer for the T-07/T-08 migration window (both deleted with their
-    // successors per issue #15). CA1859: suppressed rather than fixed by narrowing the return type,
-    // because LegacyForceFeedbackDeviceAdapter? as the return type would propagate the obsolete type
-    // into Create()'s var inference and expand the obsolete-warning surface beyond this method.
+    // CS0618: LegacyForceFeedbackDeviceAdapter is an [Obsolete] transitional type; the factory is its
+    // intended consumer for the T-07→T-10/T-14 migration window (deleted with its successor per issue
+    // #15). CA1859: suppressed rather than fixed by narrowing the return type, because
+    // LegacyForceFeedbackDeviceAdapter? as the return type would propagate the obsolete type into
+    // Create()'s var inference and expand the obsolete-warning surface beyond this method.
     // IForceFeedbackDevice? is also the factory's domain contract — Create() composes
     // IForceFeedbackDevice — making containment the cleaner architectural fit.
 #pragma warning disable CS0618, CA1859
@@ -90,21 +95,22 @@ public static class ForceFeedbackDeviceFactory
         try
         {
             _directInputAbstraction ??= new VorticeDirectInputAdapter();
+            _allowlist ??= DeviceAllowlist.LoadDefault();
 
-            foreach (var info in _directInputAbstraction.EnumerateForceFeedbackDevices())
+            var detector = new DeviceDetector(_directInputAbstraction, _allowlist);
+            foreach (var detected in detector.DetectForceFeedbackDevices())
             {
-                var model = DeviceClassifier.ClassifyByProductName(info.ProductName);
-                if (model == DeviceModel.Unknown)
+                if (detected.Model == DeviceModel.Unknown)
                 {
-                    AppLog.Write($"Skipping unrecognized force-feedback device: {info.ProductName}");
+                    AppLog.Write($"Skipping unrecognized force-feedback device: {detected.Info.ProductName}");
                     continue;
                 }
 
                 var identity = new DirectInputDeviceIdentity(
-                    info.InstanceGuid,
-                    info.ProductName,
-                    info.ProductName,   // DisplayName == ProductName at the T-07 layer; T-08's allowlist JSON may differentiate
-                    model);
+                    detected.Info.InstanceGuid,
+                    detected.Info.ProductName,
+                    detected.Info.ProductName,   // DisplayName == ProductName until T-14 profile names land
+                    detected.Model);
 
                 var device = new VorticeDirectInputDevice(
                     _directInputAbstraction,

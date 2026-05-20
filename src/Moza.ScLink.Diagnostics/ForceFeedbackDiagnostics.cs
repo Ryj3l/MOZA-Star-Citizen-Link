@@ -1,5 +1,6 @@
 using System.IO;
 using Moza.ScLink.Core;
+using Moza.ScLink.Core.Models;
 using Moza.ScLink.DirectInput;
 
 namespace Moza.ScLink.Diagnostics;
@@ -54,10 +55,15 @@ public static class ForceFeedbackDiagnostics
                 lines.Add($"  {(supportsForceFeedback ? "[FFB]" : "[no FFB]")} {DisplayName(controller)}");
             }
 
+            var allowlist = DeviceAllowlist.LoadDefault();
             lines.Add($"DirectInput force-feedback devices: {forceFeedbackDevices.Count}");
             foreach (var device in forceFeedbackDevices)
             {
-                lines.Add($"  {DisplayName(device)}");
+                var model = allowlist.Classify(device.ProductName);
+                var classification = model == DeviceModel.Unknown
+                    ? "Unknown — not allowlisted, will not be driven"
+                    : model.ToString();
+                lines.Add($"  {DisplayName(device)} [{classification}]");
             }
         }
         catch (Exception ex)
