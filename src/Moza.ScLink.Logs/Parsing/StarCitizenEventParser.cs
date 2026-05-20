@@ -18,13 +18,22 @@ public sealed class StarCitizenEventParser
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly TimeSpan DefaultMatchTimeout = TimeSpan.FromMilliseconds(100);
+
     private readonly CompiledPattern[] _patterns;
 
-    private StarCitizenEventParser(IEnumerable<EventPattern> patterns)
+    /// <summary>
+    /// Internal for tests to inject synthetic patterns independent of <see cref="LoadDefault"/>'s
+    /// file-based v0.json. See InternalsVisibleTo in Moza.ScLink.Logs.csproj.
+    /// </summary>
+    /// <param name="matchTimeout">Per-match regex timeout (ReDoS guard); <see langword="null"/> uses the
+    /// 100 ms default. Tests inject a shorter value to verify finite-time handling of catastrophic patterns.</param>
+    internal StarCitizenEventParser(IEnumerable<EventPattern> patterns, TimeSpan? matchTimeout = null)
     {
+        var timeout = matchTimeout ?? DefaultMatchTimeout;
         _patterns = patterns
             .Where(p => !string.IsNullOrWhiteSpace(p.Kind) && !string.IsNullOrWhiteSpace(p.Pattern))
-            .Select(CompiledPattern.Create)
+            .Select(p => CompiledPattern.Create(p, timeout))
             .ToArray();
     }
 
@@ -40,7 +49,8 @@ public sealed class StarCitizenEventParser
         }
 
         var json = File.ReadAllText(path);
-        var patterns = JsonSerializer.Deserialize<EventPattern[]>(json, PatternFileJsonOptions) ?? [];
+        var document = JsonSerializer.Deserialize<PatternFile>(json, PatternFileJsonOptions);
+        var patterns = document?.Patterns ?? [];
 
         var parser = new StarCitizenEventParser(patterns);
         AppLog.Write($"Loaded {parser.PatternCount} Star Citizen event pattern(s) from {path}.");
@@ -57,7 +67,21 @@ public sealed class StarCitizenEventParser
 
         foreach (var pattern in _patterns)
         {
-            var match = pattern.Regex.Match(line);
+            if (pattern.Unsupported)
+            {
+                continue;  // loaded + compiled (regex validity), but never emits (issue #32 stopgap)
+            }
+
+            Match match;
+            try
+            {
+                match = pattern.Regex.Match(line);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                continue;  // ReDoS guard fired: treat as no-match rather than hang
+            }
+
             if (!match.Success)
             {
                 continue;
@@ -95,7 +119,7 @@ public sealed class StarCitizenEventParser
         return Math.Clamp(intensity, 0, 1);
     }
 
-    private static bool TryGetRelativeVelocityMagnitude(string line, out double magnitude)
+    internal static bool TryGetRelativeVelocityMagnitude(string line, out double magnitude)
     {
         magnitude = 0;
 
@@ -127,9 +151,10 @@ public sealed class StarCitizenEventParser
         string Name,
         Regex Regex,
         double Intensity,
-        int DurationMs)
+        int DurationMs,
+        bool Unsupported)
     {
-        public static CompiledPattern Create(EventPattern pattern)
+        public static CompiledPattern Create(EventPattern pattern, TimeSpan matchTimeout)
         {
             if (!Enum.TryParse<ScEventKind>(pattern.Kind, ignoreCase: true, out var kind))
             {
@@ -139,9 +164,13 @@ public sealed class StarCitizenEventParser
             return new CompiledPattern(
                 kind,
                 pattern.Name,
-                new Regex(pattern.Pattern, RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant),
+                new Regex(
+                    pattern.Pattern,
+                    RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant,
+                    matchTimeout),
                 pattern.Intensity,
-                pattern.DurationMs);
+                pattern.DurationMs,
+                pattern.Unsupported);
         }
     }
 }

@@ -12,4 +12,8 @@
     <None Update="Patterns\v0.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Moza.ScLink.Logs.Tests" />
+  </ItemGroup>
+
 </Project>

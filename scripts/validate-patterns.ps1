@@ -47,14 +47,13 @@ foreach ($pf in $patternFiles) {
         try {
             $regex = New-Object System.Text.RegularExpressions.Regex(
                 $p.pattern,
-                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
-                [System.Text.RegularExpressions.RegexOptions]::CultureInvariant,
+                ([System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [System.Text.RegularExpressions.RegexOptions]::CultureInvariant),
                 [TimeSpan]::FromMilliseconds(100))
         } catch {
             $compileFailures += [PSCustomObject]@{
                 File    = $pf.Name
                 Kind    = $p.kind
-                Pattern = $p.pattern.Substring(0, [Math]::Min(80, $p.pattern.Length))
+                Pattern = "$($p.pattern)".Substring(0, [Math]::Min(80, "$($p.pattern)".Length))
                 Error   = $_.Exception.Message
             }
             continue
