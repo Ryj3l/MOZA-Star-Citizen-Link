@@ -84,7 +84,7 @@ One file per task in the PRP §15 decomposition. Each has: dependencies, phase, 
 
 ### JSON catalogs (`src/`)
 
-- `phase1-effect-catalog.json` — 7 Phase 1 effects with first-pass parameter values
+- `Moza.ScLink.Effects/Catalogs/phase1.json` — 7 Phase 1 effects with first-pass parameter values
 - `device-profiles.json` — AB6 and AB9 device capability descriptors
 - `device-allowlist.json` — allowlist enforcement for MOZA AB6/AB9
 

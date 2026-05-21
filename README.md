@@ -48,7 +48,7 @@ src/
   .editorconfig                         Code-style enforcement
   BannedSymbols.txt                     Forbidden API list for Roslyn analyzer
   coverlet.runsettings                  Coverage collection config
-  phase1-effect-catalog.json            7 Phase 1 effects with parameter values
+  Moza.ScLink.Effects/Catalogs/phase1.json  7 Phase 1 effects with parameter values
   device-profiles.json                  AB6 / AB9 device profiles
   device-allowlist.json           Device allowlist enforcement
 scripts/

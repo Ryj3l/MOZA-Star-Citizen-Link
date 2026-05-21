@@ -8,4 +8,8 @@
     <ProjectReference Include="..\Moza.ScLink.Core\Moza.ScLink.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Catalogs\phase1.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
