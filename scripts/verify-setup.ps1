@@ -156,7 +156,7 @@ Test-File "src/Directory.Packages.props" -Required
 Test-File "src/.editorconfig" -Required
 Test-File "src/BannedSymbols.txt" -Required
 Test-File "src/coverlet.runsettings" -Required
-Test-File "src/phase1-effect-catalog.json" -Required
+Test-File "src/Moza.ScLink.Effects/Catalogs/phase1.json" -Required
 Test-File "src/device-profiles.json" -Required
 Test-File "src/device-allowlist.json" -Required
 
