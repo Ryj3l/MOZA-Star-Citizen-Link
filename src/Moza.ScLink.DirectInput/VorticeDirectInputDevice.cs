@@ -142,6 +142,7 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
         _device.SetGain(10000);
 
         _capabilities = new DeviceCapabilities(
+            Model: _identity.Model,
             AxisCount: 2,
             SimultaneousEffectCount: 4,
             SupportsConstantForce: true,

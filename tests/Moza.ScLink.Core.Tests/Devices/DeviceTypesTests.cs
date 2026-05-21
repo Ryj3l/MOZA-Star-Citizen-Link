@@ -12,6 +12,7 @@ public sealed class DeviceTypesTests
     public void DeviceCapabilitiesPositionalConstructionPopulatesAllProperties()
     {
         var caps = new DeviceCapabilities(
+            Model: DeviceModel.MozaAb6,
             AxisCount: 2,
             SimultaneousEffectCount: 4,
             SupportsConstantForce: true,
@@ -20,6 +21,7 @@ public sealed class DeviceTypesTests
             MaxGain: 10000,
             MaxIntensityRecommended: 0.85);
 
+        caps.Model.Should().Be(DeviceModel.MozaAb6);
         caps.AxisCount.Should().Be(2);
         caps.SimultaneousEffectCount.Should().Be(4);
         caps.SupportsConstantForce.Should().BeTrue();
@@ -32,8 +34,8 @@ public sealed class DeviceTypesTests
     [Fact]
     public void DeviceCapabilitiesEqualityTwoInstancesWithSameValuesAreEqual()
     {
-        var c1 = new DeviceCapabilities(2, 4, true, true, true, 10000, 0.85);
-        var c2 = new DeviceCapabilities(2, 4, true, true, true, 10000, 0.85);
+        var c1 = new DeviceCapabilities(DeviceModel.MozaAb6, 2, 4, true, true, true, 10000, 0.85);
+        var c2 = new DeviceCapabilities(DeviceModel.MozaAb6, 2, 4, true, true, true, 10000, 0.85);
 
         c1.Should().Be(c2);
     }
@@ -41,8 +43,8 @@ public sealed class DeviceTypesTests
     [Fact]
     public void DeviceCapabilitiesEqualityTwoInstancesWithDifferentValuesAreNotEqual()
     {
-        var c1 = new DeviceCapabilities(2, 4, true, true, true, 10000, 0.85);
-        var c2 = new DeviceCapabilities(1, 2, false, false, false, 5000, 0.70);
+        var c1 = new DeviceCapabilities(DeviceModel.MozaAb6, 2, 4, true, true, true, 10000, 0.85);
+        var c2 = new DeviceCapabilities(DeviceModel.MozaAb9, 1, 2, false, false, false, 5000, 0.70);
 
         c1.Should().NotBe(c2);
     }

@@ -176,7 +176,8 @@ public sealed class MainViewModelReactivityTests
         public string ProductName { get; }
         public Guid InstanceGuid { get; } = Guid.NewGuid();
         public DeviceCapabilities Capabilities { get; } =
-            new(AxisCount: 2,
+            new(Model: DeviceModel.MozaAb9,
+                AxisCount: 2,
                 SimultaneousEffectCount: 4,
                 SupportsConstantForce: true,
                 SupportsPeriodic: true,

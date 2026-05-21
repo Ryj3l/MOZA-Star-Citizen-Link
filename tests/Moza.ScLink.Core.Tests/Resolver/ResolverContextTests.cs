@@ -9,6 +9,7 @@ namespace Moza.ScLink.Core.Tests.Resolver;
 public sealed class ResolverContextTests
 {
     private static DeviceCapabilities BuildCapabilities() => new(
+        Model: DeviceModel.MozaAb6,
         AxisCount: 2,
         SimultaneousEffectCount: 4,
         SupportsConstantForce: true,
