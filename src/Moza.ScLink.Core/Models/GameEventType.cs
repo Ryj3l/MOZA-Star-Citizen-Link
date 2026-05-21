@@ -34,6 +34,8 @@ public enum GameEventType
     WeaponFireBallistic,
     /// <summary>Energy weapon has fired.</summary>
     WeaponFireEnergy,
+    /// <summary>Weapon has fired; Phase 1 generic (sub-type not yet discriminated).</summary>
+    WeaponFireGeneric,
     /// <summary>Missile has been launched.</summary>
     MissileLaunch,
     /// <summary>Shield has absorbed a hit.</summary>

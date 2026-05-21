@@ -1,0 +1,94 @@
+{
+  "$schema": "../Schemas/fusion-rules.schema.json",
+  "schemaVersion": 1,
+  "rules": [
+    {
+      "ruleId": "log-only-quantum-spool-start",
+      "producesEventType": "QuantumSpoolStarted",
+      "description": "Log sensor reports quantum spool start; single-sensor confirmation.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.quantum_spool_start", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "quantum-spool"
+    },
+    {
+      "ruleId": "log-only-quantum-spool-end",
+      "producesEventType": "QuantumSpoolEnded",
+      "description": "Log sensor reports quantum spool end.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.quantum_spool_end", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "quantum-spool"
+    },
+    {
+      "ruleId": "log-only-quantum-jump-exit",
+      "producesEventType": "QuantumJumpExit",
+      "description": "Log sensor reports quantum jump arrival.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.quantum_jump_exit", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "quantum-jump"
+    },
+    {
+      "ruleId": "log-only-atmosphere-entered",
+      "producesEventType": "AtmosphereEntered",
+      "description": "Log sensor reports atmospheric entry.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.atmosphere_entered", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "atmosphere"
+    },
+    {
+      "ruleId": "log-only-atmosphere-exited",
+      "producesEventType": "AtmosphereExited",
+      "description": "Log sensor reports atmospheric exit.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.atmosphere_exited", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "atmosphere"
+    },
+    {
+      "ruleId": "log-only-landing-impact",
+      "producesEventType": "LandingGearContact",
+      "description": "Log sensor reports landing-impact candidate; preserves existing 750 ms de-dupe.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.landing_impact_candidate", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 750,
+      "minConfidence": 0.6,
+      "suppressionKey": "landing-impact"
+    },
+    {
+      "ruleId": "log-only-weapon-fire",
+      "producesEventType": "WeaponFireGeneric",
+      "description": "Log sensor reports weapon fire (Phase 1 generic).",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.weapon_fire", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "weapon-fire"
+    },
+    {
+      "ruleId": "log-only-vehicle-destruction",
+      "producesEventType": "VehicleDestruction",
+      "description": "Log sensor reports vehicle destruction.",
+      "requirements": [
+        { "kind": "Log", "eventType": "log.vehicle_destruction", "weight": 1.0, "required": true }
+      ],
+      "evidenceWindowMs": 0,
+      "minConfidence": 0.6,
+      "suppressionKey": "vehicle-destruction"
+    }
+  ]
+}
