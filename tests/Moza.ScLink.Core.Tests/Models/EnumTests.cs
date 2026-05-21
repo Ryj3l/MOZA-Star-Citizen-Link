@@ -17,10 +17,10 @@ public sealed class EnumTests
     }
 
     [Fact]
-    public void GameEventTypeHasExactlyNineteenValues()
+    public void GameEventTypeHasExactlyTwentyValues()
     {
         var values = Enum.GetValues<GameEventType>();
-        values.Should().HaveCount(19);
+        values.Should().HaveCount(20);
         // Quantum (4)
         values.Should().Contain(GameEventType.QuantumSpoolStarted);
         values.Should().Contain(GameEventType.QuantumSpoolEnded);
@@ -34,9 +34,10 @@ public sealed class EnumTests
         values.Should().Contain(GameEventType.LandingGearContact);
         values.Should().Contain(GameEventType.HullImpact);
         values.Should().Contain(GameEventType.VehicleDestruction);
-        // Combat (5)
+        // Combat (6)
         values.Should().Contain(GameEventType.WeaponFireBallistic);
         values.Should().Contain(GameEventType.WeaponFireEnergy);
+        values.Should().Contain(GameEventType.WeaponFireGeneric);
         values.Should().Contain(GameEventType.MissileLaunch);
         values.Should().Contain(GameEventType.ShieldHit);
         values.Should().Contain(GameEventType.HullDamage);
