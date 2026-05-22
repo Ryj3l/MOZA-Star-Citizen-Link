@@ -92,6 +92,13 @@ public static class Program
                 services.AddSingleton(_ => EffectCatalog.LoadDefault());
                 services.AddSingleton<IResolverContextProvider, DefaultResolverContextProvider>();
                 services.AddSingleton<IEffectResolver, EffectResolver>();
+
+                // T-15 safety limiter (PRP §5.8): the pure policy and its state-owning stage, which
+                // EffectResolverService runs between the resolver and the ForceCommands channel. Also DORMANT
+                // pending #43 — the stage holds no state until the hosted service drains the bus at host-start.
+                services.AddSingleton<ISafetyLimiter, SafetyLimiter>();
+                services.AddSingleton<SafetyLimiterStage>();
+
                 services.AddHostedService<EffectResolverService>();
             })
             .UseSerilog((ctx, services, cfg) =>
