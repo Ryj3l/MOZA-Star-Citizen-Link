@@ -6,6 +6,9 @@ using Microsoft.Extensions.Hosting;
 using Moza.ScLink.App.Bus;
 using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Diagnostics;
+using Moza.ScLink.Core.Resolver;
+using Moza.ScLink.Effects;
+using Moza.ScLink.Effects.Catalogs;
 using Serilog;
 
 namespace Moza.ScLink.App;
@@ -78,6 +81,18 @@ public static class Program
                 // until T-11/T-12/T-16, so the inert registration is correct and forward-looking.
                 services.AddSingleton<IEventBus, EventBus>();
                 services.AddHostedService<DropRateMonitor>();
+
+                // T-14 effect-resolution stage (PRP §5.7/§5.9). The EffectCatalog singleton is the
+                // holding-location for the hot-reloading IDisposable loader (T-13 findings #1/#2/#4: the
+                // container owns its FileSystemWatcher lifetime; a single registration avoids two-instance
+                // duplication). Also DORMANT pending #43 — hosted services only instantiate on host-start,
+                // which never happens here, so EffectCatalog.LoadDefault() does not run and T-13 #2/#3
+                // (catalog-load-on-start + "Effects loaded: N") remain deferred to the convergence. The
+                // live ResolverContext source (device caps, settings gains) also arrives with #43/T-16.
+                services.AddSingleton(_ => EffectCatalog.LoadDefault());
+                services.AddSingleton<IResolverContextProvider, DefaultResolverContextProvider>();
+                services.AddSingleton<IEffectResolver, EffectResolver>();
+                services.AddHostedService<EffectResolverService>();
             })
             .UseSerilog((ctx, services, cfg) =>
             {
