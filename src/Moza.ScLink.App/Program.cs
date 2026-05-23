@@ -7,6 +7,7 @@ using Moza.ScLink.App.Bus;
 using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Resolver;
+using Moza.ScLink.Core.Safety;
 using Moza.ScLink.Effects;
 using Moza.ScLink.Effects.Catalogs;
 using Serilog;
@@ -100,6 +101,19 @@ public static class Program
                 services.AddSingleton<SafetyLimiterStage>();
 
                 services.AddHostedService<EffectResolverService>();
+
+                // T-16 PR1 emergency-stop state authority (PRP §5.8). Shared singleton, consumed by:
+                //   - ForceCommandPipeline, the output worker (deferred — see below);
+                //   - PR2's global hotkey + WPF button/banner + telemetry (T-16 PR2 milestone).
+                // The pipeline's AddHostedService registration is deferred until the canonical
+                // Moza.ScLink.Core.Devices.IForceFeedbackDevice is DI-registered: today the App's
+                // ForceFeedbackDeviceFactory.Create() returns the legacy Core.IForceFeedbackDevice via
+                // LegacyForceFeedbackDeviceAdapter wrapping a VorticeDirectInputDevice, so no canonical-interface
+                // registration exists to satisfy the pipeline's constructor. Registering it now would be the
+                // first dormant service with an unsatisfiable dependency (host-start would throw). Wiring lands
+                // with #43 (host-start) + #15 (transitional T-07 shim removal, incl. the legacy adapter that
+                // currently down-converts the canonical device) — a convergence step no current task owns.
+                services.AddSingleton<IEmergencyStop, EmergencyStop>();
             })
             .UseSerilog((ctx, services, cfg) =>
             {
