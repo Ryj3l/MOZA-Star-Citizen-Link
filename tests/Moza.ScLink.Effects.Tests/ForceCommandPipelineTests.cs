@@ -130,6 +130,25 @@ public sealed class ForceCommandPipelineTests
             p95);
     }
 
+    [Fact]
+    public void DisposeReleasesResourcesAndIsIdempotent()
+    {
+        var bus = new EventBus();
+        var device = new RecordingForceFeedbackDevice();
+        var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);
+        var pipeline = new ForceCommandPipeline(bus, device, estop, NullLogger<ForceCommandPipeline>.Instance);
+
+        // Disposing without ever starting the host must release the wake-trigger CTS cleanly, and a second
+        // Dispose must be a safe no-op (CancellationTokenSource.Dispose is idempotent).
+        var dispose = () =>
+        {
+            pipeline.Dispose();
+            pipeline.Dispose();
+        };
+
+        dispose.Should().NotThrow();
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
