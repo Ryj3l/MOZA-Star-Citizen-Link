@@ -75,6 +75,76 @@ public static class ForceFeedbackDeviceFactory
         return new FallbackForceFeedbackDevice(devices, directInputProvider, initialDirectInputSlot: directInput);
     }
 
+    /// <summary>
+    /// T-27 canonical device factory. Decides ONCE at startup: the unwrapped canonical
+    /// <see cref="VorticeDirectInputDevice"/> if an allowlisted DirectInput device enumerates, otherwise
+    /// the <see cref="LoggingNullForceFeedbackDevice"/> no-hardware fallback. <c>MOZA_SC_OUTPUT=Preview</c>
+    /// forces the fallback without enumerating (dev affordance on a machine that has hardware). Replaces
+    /// the legacy multi-tier <see cref="Create"/> chain (deleted with the legacy path in #45/#15); canonical
+    /// hot-plug + an SDK-bridge tier on this interface are tracked as a follow-up (PRP §10.1, line 1011).
+    /// </summary>
+    public static Moza.ScLink.Core.Devices.IForceFeedbackDevice CreateCanonical()
+    {
+        if (ParseOutputMode(Environment.GetEnvironmentVariable("MOZA_SC_OUTPUT")) != ForceFeedbackOutputMode.Preview)
+        {
+            var device = TryEnumerateAllowlistedVorticeDevice();
+            if (device is not null)
+            {
+                return device;
+            }
+        }
+
+        return new LoggingNullForceFeedbackDevice(
+            _loggerFactory.CreateLogger<LoggingNullForceFeedbackDevice>());
+    }
+
+    // Enumerates allowlisted DirectInput force-feedback devices and returns the first as an unwrapped
+    // canonical VorticeDirectInputDevice (no LegacyForceFeedbackDeviceAdapter). Returns null when nothing
+    // is allowlisted or enumeration fails — CreateCanonical then falls back to the logging-null device,
+    // mirroring the legacy CreateIfAvailable() resilience. Shares no code with CreateDirectInputDevice by
+    // design: E1's Fork-3 gate requires zero behavior change to the legacy path, so the legacy method is
+    // left untouched; this enumeration block dies with the legacy method in E2.
+    private static VorticeDirectInputDevice? TryEnumerateAllowlistedVorticeDevice()
+    {
+        try
+        {
+            _directInputAbstraction ??= new VorticeDirectInputAdapter();
+            _allowlist ??= DeviceAllowlist.LoadDefault();
+
+            var detector = new DeviceDetector(_directInputAbstraction, _allowlist);
+            foreach (var detected in detector.DetectForceFeedbackDevices())
+            {
+                if (detected.Model == DeviceModel.Unknown)
+                {
+                    AppLog.Write($"Skipping unrecognized force-feedback device: {detected.Info.ProductName}");
+                    continue;
+                }
+
+                var identity = new DirectInputDeviceIdentity(
+                    detected.Info.InstanceGuid,
+                    detected.Info.ProductName,
+                    detected.Info.ProductName,   // DisplayName == ProductName until T-14 profile names land
+                    detected.Model);
+
+                // First allowlisted device wins — matches the legacy IsPreferredDevice priority.
+                return new VorticeDirectInputDevice(
+                    _directInputAbstraction,
+                    identity,
+                    _loggerFactory.CreateLogger<VorticeDirectInputDevice>());
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            // Mirrors CreateDirectInputDevice's resilience: a COM/enumeration failure degrades to the
+            // logging-null device rather than crashing app startup. CA1031 is .editorconfig 'suggestion'
+            // severity — this comment is the justification.
+            AppLog.Write(ex, "DirectInput canonical force-feedback enumeration failed");
+            return null;
+        }
+    }
+
     // Replaces the legacy DirectInputForceFeedbackDevice.CreateIfAvailable(). Enumerates DirectInput
     // force-feedback devices through the Vortice abstraction, classifies each against the
     // device-allowlist.json-driven DeviceAllowlist (via DeviceDetector), and wraps the first

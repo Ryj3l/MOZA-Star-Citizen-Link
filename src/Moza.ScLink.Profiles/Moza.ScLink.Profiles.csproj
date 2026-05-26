@@ -6,4 +6,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- T-27 E1: exposes AppSettingsStore's internal test-path ctor so unit tests can isolate the
+         settings file (GameLogPathProvider policy + §14.2-#4 corrupted-file recovery). -->
+    <InternalsVisibleTo Include="Moza.ScLink.App.Tests" />
+    <InternalsVisibleTo Include="Moza.ScLink.Profiles.Tests" />
+  </ItemGroup>
+
 </Project>
