@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
@@ -8,14 +9,48 @@ namespace Moza.ScLink.App.Tests;
 /// Minimal canonical <see cref="IForceFeedbackDevice"/> test double for the T-27 App-layer tests:
 /// records InitializeAsync/ExecuteAsync/StopAllAsync calls and raises StateChanged on initialization
 /// (so the gutted MainViewModel's Output-row subscription can be exercised).
+/// <para>
+/// Thread-safe: the T-27 E3 integration tests start the real generic host, whose ForceCommandPipeline
+/// background loop calls <see cref="ExecuteAsync"/>/<see cref="StopAllAsync"/> while the test thread reads.
+/// All recording state is guarded by <c>_gate</c>; read it across threads via <see cref="ExecutedSnapshot"/>
+/// and the lock-guarded counters. <see cref="StopAllAsync"/> stamps a high-resolution
+/// <see cref="Stopwatch.GetTimestamp"/> tick so the live-pipeline e-stop latency test can measure
+/// Activate→StopAll wall-clock time. Existing single-threaded unit-test consumers are unaffected.
+/// </para>
 /// </summary>
 internal sealed class RecordingCanonicalDevice : IForceFeedbackDevice
 {
-    public int InitializeCount { get; private set; }
+    private readonly object _gate = new();
+    private readonly List<long> _stopAllTimestamps = [];
+    private int _initializeCount;
+    private int _stopAllCount;
+
+    public int InitializeCount
+    {
+        get { lock (_gate) { return _initializeCount; } }
+    }
 
     public List<ForceCommand> Executed { get; } = [];
 
-    public int StopAllCount { get; private set; }
+    public int StopAllCount
+    {
+        get { lock (_gate) { return _stopAllCount; } }
+    }
+
+    /// <summary>Snapshot copy of <see cref="Executed"/> taken under the lock, for hermetic cross-thread reads.</summary>
+    public IReadOnlyList<ForceCommand> ExecutedSnapshot
+    {
+        get { lock (_gate) { return Executed.ToList(); } }
+    }
+
+    /// <summary>
+    /// <see cref="Stopwatch.GetTimestamp"/> tick of the most recent <see cref="StopAllAsync"/> call.
+    /// Throws if StopAllAsync has not been called — callers assert <see cref="StopAllCount"/> first.
+    /// </summary>
+    public long LastStopAllTimestamp
+    {
+        get { lock (_gate) { return _stopAllTimestamps[^1]; } }
+    }
 
     public DeviceModel Model => DeviceModel.MozaAb6;
 
@@ -36,22 +71,38 @@ internal sealed class RecordingCanonicalDevice : IForceFeedbackDevice
 
     public Task InitializeAsync(CancellationToken cancellationToken)
     {
-        InitializeCount++;
-        var previous = State;
-        State = DeviceState.Ready;
+        DeviceState previous;
+        lock (_gate)
+        {
+            _initializeCount++;
+            previous = State;
+            State = DeviceState.Ready;
+        }
+
         StateChanged?.Invoke(this, new DeviceStateChangedEventArgs { Previous = previous, Current = State });
         return Task.CompletedTask;
     }
 
     public Task ExecuteAsync(ForceCommand command, CancellationToken cancellationToken)
     {
-        Executed.Add(command);
+        lock (_gate)
+        {
+            Executed.Add(command);
+        }
+
         return Task.CompletedTask;
     }
 
     public Task StopAllAsync(CancellationToken cancellationToken)
     {
-        StopAllCount++;
+        // Stamp as the very first action so the measured latency excludes the double's own bookkeeping.
+        var stamp = Stopwatch.GetTimestamp();
+        lock (_gate)
+        {
+            _stopAllCount++;
+            _stopAllTimestamps.Add(stamp);
+        }
+
         return Task.CompletedTask;
     }
 
