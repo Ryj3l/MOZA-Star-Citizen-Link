@@ -1,61 +1,73 @@
+using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
-using Microsoft.Win32;
-using Moza.ScLink.App.ForceFeedback;
+using Moza.ScLink.App.GameLog;
+using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Models;
+using Moza.ScLink.Core.Sensors;
 using Moza.ScLink.Diagnostics;
-using Moza.ScLink.Effects;
-using Moza.ScLink.Logs;
-using Moza.ScLink.Logs.Parsing;
-using Moza.ScLink.Profiles.Settings;
 
 namespace Moza.ScLink.App.ViewModels;
 
+/// <summary>
+/// Bus-publishing UI shell (T-27). After the migration convergence the view model no longer drives the
+/// device directly: the generic host owns the sensor → fusion → resolver → safety → output-worker
+/// pipeline. The view model resolves the Game.log path (via <see cref="IGameLogPathProvider"/>), surfaces
+/// the canonical device's identity/state, renders diagnostics, and publishes synthetic
+/// <see cref="SensorEvent"/>s onto the bus for the manual Test buttons — establishing the "UI publishes
+/// to the bus" pattern T-16 PR2 inherits. The legacy <c>ForceFeedbackController</c>/<c>GameLogTailer</c>
+/// direct-drive path is removed (#45/#15).
+/// </summary>
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
-    private readonly StarCitizenEventParser _parser = StarCitizenEventParser.LoadDefault();
-    private readonly ForceFeedbackController _feedback;
-    private readonly AppSettingsStore _settingsStore = new();
-    private GameLogTailer? _tailer;
+    // EventType strings mirror LogSensor.MapEventType so the synthetic Test events route through the same
+    // fusion rules as real Game.log lines (phase1-rules.json). SensorKind.Log is the routing key; the
+    // SensorId is deliberately distinct so diagnostics can tell test injections from real log evidence.
+    private const string TestInjectionSensorId = "ui.test-injection";
+    private const string QuantumSpoolStartEventType = "log.quantum_spool_start";
+    private const string LandingImpactEventType = "log.landing_impact_candidate";
+    private const string AtmosphereEnteredEventType = "log.atmosphere_entered";
+
+    private readonly IEventBus _bus;
+    private readonly IGameLogPathProvider _pathProvider;
+    private readonly IForceFeedbackDevice _device;
+
     private string _gameLogPath = string.Empty;
     private string _status = "Ready.";
     private string _outputName = string.Empty;
     private string _outputStatus = string.Empty;
-    private bool _isMonitoring;
-    private bool _isStarting;
-    private long _logLinesRead;
-    private long _logEventsMatched;
 
-    public MainViewModel()
-        : this(new ForceFeedbackController(ForceFeedbackDeviceFactory.Create())) { }
-
-    // T-07 Issue #27 Pass-2 S2: internal injection ctor for App.Tests' D4 reactivity tests.
-    // App's AssemblyInfo.cs grants InternalsVisibleTo("Moza.ScLink.App.Tests") so the test
-    // project can compose MainViewModel with a pre-built controller. Test-only ctors are
-    // internal + IVT, not public — keeps the production public surface honest.
-    internal MainViewModel(ForceFeedbackController feedback)
+    public MainViewModel(IEventBus bus, IGameLogPathProvider pathProvider, IForceFeedbackDevice device)
     {
-        _feedback = feedback;
+        ArgumentNullException.ThrowIfNull(bus);
+        ArgumentNullException.ThrowIfNull(pathProvider);
+        ArgumentNullException.ThrowIfNull(device);
+        _bus = bus;
+        _pathProvider = pathProvider;
+        _device = device;
 
-        AutoDetectCommand = new RelayCommand(_ => AutoDetectAsync());
-        BrowseCommand = new RelayCommand(_ => BrowseAsync());
-        StartCommand = new RelayCommand(_ => StartAsync(), _ => !IsMonitoring && !_isStarting && File.Exists(GameLogPath));
-        StopCommand = new RelayCommand(_ => StopAsync(), _ => IsMonitoring);
-        TestQuantumCommand = new RelayCommand(_ => TestAsync(ScEventKind.QuantumSpoolStarted));
-        TestImpactCommand = new RelayCommand(_ => TestAsync(ScEventKind.LandingImpact));
-        TestAtmosphereCommand = new RelayCommand(_ => TestAsync(ScEventKind.AtmosphereEntered));
+        AutoDetectCommand = new RelayCommand(_ => AutoDetect());
+        BrowseCommand = new RelayCommand(_ => Browse());
+        TestQuantumCommand = new RelayCommand(_ =>
+            PublishTestEvent(QuantumSpoolStartEventType, intensity: 0.42, duration: TimeSpan.FromSeconds(8)));
+        TestImpactCommand = new RelayCommand(_ =>
+            PublishTestEvent(LandingImpactEventType, intensity: 0.75, duration: TimeSpan.FromMilliseconds(260),
+                features: ImmutableDictionary<string, double>.Empty.Add("relativeVelocityMagnitude", 13.0)));
+        TestAtmosphereCommand = new RelayCommand(_ =>
+            PublishTestEvent(AtmosphereEnteredEventType, intensity: 0.22, duration: TimeSpan.Zero));
         RefreshDiagnosticsCommand = new RelayCommand(_ => RefreshDiagnosticsAsync());
 
-        OutputName = _feedback.OutputName;
-        OutputStatus = _feedback.OutputStatus;
-        _feedback.ChainStateChanged += OnChainStateChanged;
-        LoadInitialPath();
+        OutputName = _device.DisplayName;
+        OutputStatus = _device.State.ToUserFacingString();
+        _device.StateChanged += OnDeviceStateChanged;
+
+        ApplyResolution(_pathProvider.ResolveAtStartup());
         RefreshDiagnostics(includeExtendedDiagnostics: false);
     }
 
@@ -64,31 +76,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string GameLogPath
     {
         get => _gameLogPath;
-        set
-        {
-            if (SetField(ref _gameLogPath, value))
-            {
-                RaiseCommandStates();
-            }
-        }
+        set => SetField(ref _gameLogPath, value);
     }
 
     public string Status
     {
         get => _status;
         set => SetField(ref _status, value);
-    }
-
-    public bool IsMonitoring
-    {
-        get => _isMonitoring;
-        set
-        {
-            if (SetField(ref _isMonitoring, value))
-            {
-                RaiseCommandStates();
-            }
-        }
     }
 
     public string OutputName
@@ -103,14 +97,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set => SetField(ref _outputStatus, value);
     }
 
-    /// <summary>
-    /// Passthrough of the underlying chain's
-    /// <see cref="Moza.ScLink.Core.Devices.IDeviceAvailabilityObserver"/> when the chain implements
-    /// it; null otherwise. <c>MainWindow.OnWindowMessage</c> (B6) reads this to route WM_DEVICECHANGE
-    /// events into the chain's hot-plug re-selection.
-    /// </summary>
-    public IDeviceAvailabilityObserver? DeviceAvailabilityObserver => _feedback.DeviceAvailabilityObserver;
-
     public ObservableCollection<string> Events { get; } = [];
 
     public ObservableCollection<string> Diagnostics { get; } = [];
@@ -118,10 +104,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand AutoDetectCommand { get; }
 
     public ICommand BrowseCommand { get; }
-
-    public ICommand StartCommand { get; }
-
-    public ICommand StopCommand { get; }
 
     public ICommand TestQuantumCommand { get; }
 
@@ -131,40 +113,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ICommand RefreshDiagnosticsCommand { get; }
 
-    public async Task AutoStartAsync()
+    // Commands are surfaced through RelayCommand (Func<object?, Task>); these affordances are synchronous,
+    // so they complete the returned Task immediately.
+    private Task AutoDetect()
     {
-        if (IsMonitoring || _isStarting)
+        var resolution = _pathProvider.AutoDetect();
+        ApplyResolution(resolution);
+        if (resolution.Origin == GameLogPathOrigin.None)
         {
-            return;
+            AppLog.Write("Auto-detect found no readable Game.log.");
+        }
+        else
+        {
+            AppLog.Write($"Auto-detect selected Game.log: {resolution.Path}. {GetLogFileSummary(resolution.Path!)}");
         }
 
-        if (!File.Exists(GameLogPath))
-        {
-            AppLog.Write("Auto-start skipped because no readable Game.log is selected.");
-            return;
-        }
-
-        AppLog.Write($"Auto-starting Game.log monitoring for '{GameLogPath}'.");
-        await StartAsync();
+        return Task.CompletedTask;
     }
 
-    private async Task AutoDetectAsync()
-    {
-        var detected = StarCitizenLogLocator.FindGameLog();
-        if (detected is null)
-        {
-            Status = "Game.log was not auto-detected. Use Browse once if Star Citizen is installed in a custom folder.";
-            return;
-        }
-
-        GameLogPath = detected;
-        _settingsStore.Save(new AppSettings { GameLogPath = detected });
-        AppLog.Write($"Auto-detect selected Game.log: {detected}. {GetLogFileSummary(detected)}");
-        Status = $"Detected Game.log: {detected}";
-        await AutoStartAsync();
-    }
-
-    private async Task BrowseAsync()
+    private Task Browse()
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
@@ -175,162 +142,47 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         if (dialog.ShowDialog() == true)
         {
-            GameLogPath = dialog.FileName;
-            _settingsStore.Save(new AppSettings { GameLogPath = dialog.FileName });
-            Status = $"Using Game.log: {dialog.FileName}";
+            ApplyResolution(_pathProvider.UseExplicitPath(dialog.FileName));
             AppLog.Write($"Browse selected Game.log: {dialog.FileName}. {GetLogFileSummary(dialog.FileName)}");
-            await AutoStartAsync();
         }
+
+        return Task.CompletedTask;
     }
 
-    private async Task StartAsync()
+    // Publishes a synthetic SensorEvent straight onto the bus, exercising the live pipeline exactly as a
+    // real Game.log line would (fusion → resolver → safety → output worker → device). Mirrors
+    // LogSensor.ToSensorEvent so the manual Test affordance and the real sensor produce identical evidence.
+    private Task PublishTestEvent(
+        string eventType,
+        double intensity,
+        TimeSpan duration,
+        ImmutableDictionary<string, double>? features = null)
     {
-        if (IsMonitoring || _isStarting)
+        var sensorEvent = new SensorEvent
         {
-            Status = BuildMonitoringStatus();
-            return;
-        }
-
-        if (!File.Exists(GameLogPath))
-        {
-            Status = "Game.log does not exist.";
-            return;
-        }
-
-        _isStarting = true;
-        RaiseCommandStates();
-        Status = "Starting Game.log monitoring.";
-
-        try
-        {
-            await _feedback.InitializeAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            Status = $"Force feedback output failed to initialize: {ex.Message}";
-            AppLog.Write(ex, "Force feedback output failed to initialize while starting monitoring");
-            return;
-        }
-        finally
-        {
-            _isStarting = false;
-            RaiseCommandStates();
-        }
-
-        _tailer = new GameLogTailer(GameLogPath);
-        _tailer.LineRead += OnLineRead;
-        _tailer.Faulted += (_, message) =>
-        {
-            AppLog.Write($"Game.log read warning for '{GameLogPath}': {message}");
-            Dispatch(() => Status = $"Log read warning: {message}");
-        };
-        _logLinesRead = 0;
-        _logEventsMatched = 0;
-        AppLog.Write($"Starting Game.log monitoring at end of '{GameLogPath}'. Patterns loaded: {_parser.PatternCount}. {GetLogFileSummary(GameLogPath)}");
-        _tailer.Start(startAtEnd: true);
-
-        IsMonitoring = true;
-        AddEvent("Monitoring started. New Star Citizen log lines will be parsed from this point forward.");
-        Status = BuildMonitoringStatus();
-    }
-
-    private async Task StopAsync()
-    {
-        try
-        {
-            var wasMonitoring = IsMonitoring || _tailer is not null;
-
-            if (_tailer is not null)
-            {
-                _tailer.LineRead -= OnLineRead;
-                await _tailer.StopAsync();
-                _tailer.Dispose();
-                _tailer = null;
-            }
-
-            await _feedback.StopAllAsync(CancellationToken.None);
-            if (!wasMonitoring)
-            {
-                IsMonitoring = false;
-                Status = "Monitoring is not running.";
-                AppLog.Write("Stop requested while Game.log monitoring was not active; stopped all active effects.");
-                return;
-            }
-
-            IsMonitoring = false;
-            Status = "Monitoring stopped.";
-            AddEvent($"Monitoring stopped; read {_logLinesRead} line(s), matched {_logEventsMatched} log event(s), and stopped all sustained effects.");
-            AppLog.Write($"Stopped Game.log monitoring. Lines read: {_logLinesRead}. Events matched: {_logEventsMatched}. {GetLogFileSummary(GameLogPath)}");
-        }
-        catch (Exception ex)
-        {
-            AppLog.Write(ex, "Stop failed");
-            IsMonitoring = false;
-            Status = $"Monitoring stopped, but force feedback cleanup failed: {ex.Message}";
-            AddEvent($"Stop warning: {ex.Message}");
-        }
-    }
-
-    private async void OnLineRead(object? sender, string line)
-    {
-        try
-        {
-            var linesRead = Interlocked.Increment(ref _logLinesRead);
-            if (linesRead <= 5 || linesRead % 250 == 0)
-            {
-                var matched = Interlocked.Read(ref _logEventsMatched);
-                AppLog.Write($"Game.log tailer read {linesRead} line(s); matched {matched} event(s).");
-                Dispatch(() => Status = BuildMonitoringStatus());
-            }
-
-            var gameEvent = _parser.Parse(line);
-            if (gameEvent is null)
-            {
-                return;
-            }
-
-            var matches = Interlocked.Increment(ref _logEventsMatched);
-            AppLog.Write($"Matched Game.log event #{matches}: {gameEvent.Kind} '{gameEvent.Name}' from {TrimLogLine(line)}");
-            await HandleGameEventAsync(gameEvent);
-        }
-        catch (Exception ex)
-        {
-            AppLog.Write(ex, "Game.log line handling failed");
-            Dispatch(() => Status = $"Game.log event handling failed: {ex.Message}");
-        }
-    }
-
-    private async Task TestAsync(ScEventKind kind)
-    {
-        var gameEvent = kind switch
-        {
-            ScEventKind.QuantumSpoolStarted => new ScGameEvent(kind, "Quantum spool test", 0.42, TimeSpan.FromSeconds(8), "test", DateTimeOffset.Now),
-            ScEventKind.LandingImpact => new ScGameEvent(kind, "Landing/impact test", 0.75, TimeSpan.FromMilliseconds(260), "test", DateTimeOffset.Now),
-            ScEventKind.AtmosphereEntered => new ScGameEvent(kind, "In-atmosphere test", 0.22, TimeSpan.Zero, "test", DateTimeOffset.Now),
-            _ => new ScGameEvent(kind, "Effect test", 0.5, TimeSpan.FromMilliseconds(500), "test", DateTimeOffset.Now)
+            EventId = Guid.NewGuid().ToString(),
+            SensorId = TestInjectionSensorId,
+            SensorKind = SensorKind.Log,
+            EventType = eventType,
+            Timestamp = DateTimeOffset.Now,
+            Intensity = intensity,
+            Duration = duration,
+            Features = features ?? ImmutableDictionary<string, double>.Empty,
         };
 
-        try
+        if (_bus.SensorEvents.TryWrite(sensorEvent))
         {
-            await _feedback.InitializeAsync(CancellationToken.None);
+            AddEvent($"{sensorEvent.Timestamp:HH:mm:ss} Published test event {eventType} (intensity {intensity:0.##}).");
+            Status = $"Published test event {eventType}.";
+            AppLog.Write($"Published synthetic test SensorEvent {eventType} (intensity {intensity:0.##}).");
         }
-        catch (Exception ex)
+        else
         {
-            Status = $"Force feedback output failed to initialize: {ex.Message}";
-            return;
+            AddEvent($"{sensorEvent.Timestamp:HH:mm:ss} Test event dropped (bus full): {eventType}.");
+            Status = $"Test event dropped (bus full): {eventType}.";
         }
 
-        try
-        {
-            var result = await _feedback.HandleAsync(gameEvent, CancellationToken.None);
-            AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: {result}");
-            Status = result;
-        }
-        catch (Exception ex)
-        {
-            Status = $"Force feedback output failed: {ex.Message}";
-            AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: failed - {ex.Message}");
-        }
+        return Task.CompletedTask;
     }
 
     private void AddEvent(string message)
@@ -350,7 +202,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Diagnostics.Add("Running extended diagnostics...");
 
         var diagnosticTask = Task.Run(() =>
-            ForceFeedbackDiagnostics.GetLines(_feedback.Device, includeExtendedDiagnostics: true));
+            ForceFeedbackDiagnostics.GetLines(_device, includeExtendedDiagnostics: true));
         var timeoutTask = Task.Delay(TimeSpan.FromSeconds(3));
         var completedTask = await Task.WhenAny(diagnosticTask, timeoutTask);
 
@@ -358,12 +210,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Diagnostics.Clear();
             AddLogDiagnostics();
-            foreach (var line in ForceFeedbackDiagnostics.GetLines(_feedback.Device, includeExtendedDiagnostics: false))
+            foreach (var line in ForceFeedbackDiagnostics.GetLines(_device, includeExtendedDiagnostics: false))
             {
                 Diagnostics.Add(line);
             }
 
-            Diagnostics.Add("Extended diagnostics timed out. The MOZA SDK probe may be blocking.");
+            Diagnostics.Add("Extended diagnostics timed out.");
             Status = "Diagnostics timed out.";
             return;
         }
@@ -382,7 +234,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         Diagnostics.Clear();
         AddLogDiagnostics();
-        foreach (var line in ForceFeedbackDiagnostics.GetLines(_feedback.Device, includeExtendedDiagnostics))
+        foreach (var line in ForceFeedbackDiagnostics.GetLines(_device, includeExtendedDiagnostics))
         {
             Diagnostics.Add(line);
         }
@@ -396,55 +248,30 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Diagnostics.Add($"Selected Game.log summary: {GetLogFileSummary(GameLogPath)}");
         }
-
-        Diagnostics.Add($"Event patterns loaded: {_parser.PatternCount}");
-        Diagnostics.Add($"Monitoring read/matched: {_logLinesRead}/{_logEventsMatched}");
     }
 
-    private void LoadInitialPath()
+    // Renders a GameLogPathResolution onto the path textbox + status line. The host resolves the sensor's
+    // path once at startup, so Auto-detect/Browse here persist the choice for the next launch (live
+    // re-point is deferred to T-17).
+    private void ApplyResolution(GameLogPathResolution resolution)
     {
-        var settings = _settingsStore.Load();
-        var detected = StarCitizenLogLocator.FindGameLog();
-        if (!string.IsNullOrWhiteSpace(settings.GameLogPath) && File.Exists(settings.GameLogPath))
+        GameLogPath = resolution.Path ?? string.Empty;
+        Status = resolution.Origin switch
         {
-            if (!string.IsNullOrWhiteSpace(detected) &&
-                !PathsEqual(settings.GameLogPath, detected) &&
-                IsNewerLog(detected, settings.GameLogPath))
-            {
-                GameLogPath = detected;
-                _settingsStore.Save(new AppSettings { GameLogPath = detected });
-                AppLog.Write($"Replaced saved Game.log with newer auto-detected log: {detected}. Previous saved log: {settings.GameLogPath}.");
-                Status = $"Detected newer Game.log: {detected}";
-                return;
-            }
-
-            GameLogPath = settings.GameLogPath;
-            AppLog.Write($"Using saved Game.log: {settings.GameLogPath}. {GetLogFileSummary(settings.GameLogPath)}");
-            Status = $"Using saved Game.log: {settings.GameLogPath}";
-            return;
-        }
-
-        if (!string.IsNullOrWhiteSpace(detected))
-        {
-            GameLogPath = detected;
-            _settingsStore.Save(new AppSettings { GameLogPath = detected });
-            AppLog.Write($"Initial auto-detect selected Game.log: {detected}. {GetLogFileSummary(detected)}");
-            Status = $"Detected Game.log: {detected}";
-            return;
-        }
-
-        Status = "Game.log was not auto-detected. Use Browse once if Star Citizen is installed in a custom folder.";
+            GameLogPathOrigin.Saved => $"Using saved Game.log: {resolution.Path}",
+            GameLogPathOrigin.ReplacedWithNewer => $"Detected newer Game.log: {resolution.Path}",
+            GameLogPathOrigin.Detected => $"Detected Game.log: {resolution.Path}",
+            GameLogPathOrigin.Explicit => $"Using Game.log: {resolution.Path} (applies on next launch).",
+            _ => "Game.log was not auto-detected. Use Browse once if Star Citizen is installed in a custom folder.",
+        };
     }
 
-    private void OnChainStateChanged(object? sender, ChainStateChangedEventArgs e)
+    private void OnDeviceStateChanged(object? sender, DeviceStateChangedEventArgs e)
     {
         Dispatch(() =>
         {
-            OutputName = e.OutputName;
-            OutputStatus = e.OutputStatus;
-            AppLog.Write(e.IsReady
-                ? $"Device available: {e.OutputName}"
-                : $"Device lost — entering preview mode: {e.OutputName}");
+            OutputStatus = e.Current.ToUserFacingString();
+            AppLog.Write($"Device state changed: {e.Previous} -> {e.Current} ({_device.DisplayName}).");
         });
     }
 
@@ -461,39 +288,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private static Task DispatchAsync(Func<Task> action)
-    {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess())
-        {
-            return action();
-        }
-
-        return dispatcher.InvokeAsync(action).Task.Unwrap();
-    }
-
-    private async Task HandleGameEventAsync(ScGameEvent gameEvent)
-    {
-        await DispatchAsync(async () =>
-        {
-            try
-            {
-                var result = await _feedback.HandleAsync(gameEvent, CancellationToken.None);
-                AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: {result}");
-                Status = $"{result} ({BuildMonitoringStatus()})";
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write(ex, $"Force feedback output failed for event {gameEvent.Kind}");
-                Status = $"Force feedback output failed: {ex.Message}";
-                AddEvent($"{gameEvent.Timestamp:HH:mm:ss} {gameEvent.Name}: failed - {ex.Message}");
-            }
-        });
-    }
-
-    private string BuildMonitoringStatus() =>
-        $"Monitoring Game.log. Lines read: {_logLinesRead}; log events matched: {_logEventsMatched}.";
-
     private static string GetLogFileSummary(string path)
     {
         try
@@ -504,41 +298,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return $"File summary unavailable: {ex.Message}";
-        }
-    }
-
-    private static string TrimLogLine(string line)
-    {
-        const int maxLength = 260;
-        var trimmed = line.Trim();
-        return trimmed.Length <= maxLength
-            ? trimmed
-            : string.Concat(trimmed.AsSpan(0, maxLength), "...");
-    }
-
-    private static bool PathsEqual(string first, string second)
-    {
-        try
-        {
-            return string.Equals(Path.GetFullPath(first), Path.GetFullPath(second), StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return string.Equals(first, second, StringComparison.OrdinalIgnoreCase);
-        }
-    }
-
-    private static bool IsNewerLog(string candidatePath, string currentPath)
-    {
-        try
-        {
-            var candidate = new FileInfo(candidatePath);
-            var current = new FileInfo(currentPath);
-            return candidate.LastWriteTimeUtc > current.LastWriteTimeUtc.AddSeconds(5);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
         }
     }
 
@@ -554,20 +313,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    private void RaiseCommandStates()
-    {
-        foreach (var command in new[] { StartCommand, StopCommand })
-        {
-            if (command is RelayCommand relayCommand)
-            {
-                relayCommand.RaiseCanExecuteChanged();
-            }
-        }
-    }
-
     public void Dispose()
     {
-        _feedback.ChainStateChanged -= OnChainStateChanged;
-        _ = StopAsync();
+        _device.StateChanged -= OnDeviceStateChanged;
     }
 }

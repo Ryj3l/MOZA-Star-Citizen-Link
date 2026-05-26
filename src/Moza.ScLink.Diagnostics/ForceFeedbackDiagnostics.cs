@@ -1,4 +1,3 @@
-using System.IO;
 using Moza.ScLink.Core;
 using Moza.ScLink.Core.Models;
 using Moza.ScLink.DirectInput;
@@ -8,29 +7,19 @@ namespace Moza.ScLink.Diagnostics;
 public static class ForceFeedbackDiagnostics
 {
     public static IReadOnlyList<string> GetLines(
-        IForceFeedbackDevice selectedDevice,
+        Moza.ScLink.Core.Devices.IForceFeedbackDevice selectedDevice,
         bool includeExtendedDiagnostics)
     {
         var lines = new List<string>
         {
             $"Output mode: {Environment.GetEnvironmentVariable("MOZA_SC_OUTPUT") ?? "Auto"}",
-            $"Selected output: {selectedDevice.Name}",
-            $"Output status: {selectedDevice.Status}"
+            $"Selected output: {selectedDevice.DisplayName}",
+            $"Output status: {selectedDevice.State.ToUserFacingString()}"
         };
-
-        var bridgePath = Path.Combine(AppContext.BaseDirectory, "drivers", "MozaForceBridge.dll");
-        var managedSdkPath = Path.Combine(AppContext.BaseDirectory, "drivers", "moza-sdk", "x64", "MOZA_API_CSharp.dll");
-        lines.Add(File.Exists(managedSdkPath)
-            ? $"MOZA C# SDK: found at {managedSdkPath}"
-            : $"MOZA C# SDK: not found at {managedSdkPath}");
-        lines.Add("MOZA SDK product query: disabled because this racing SDK can terminate the process when probing unsupported devices.");
-        lines.Add(File.Exists(bridgePath)
-            ? $"MOZA SDK bridge: found at {bridgePath}"
-            : $"MOZA SDK bridge: not found at {bridgePath}");
 
         if (!includeExtendedDiagnostics)
         {
-            lines.Add("Press Refresh to probe MOZA SDK devices and DirectInput controllers.");
+            lines.Add("Press Refresh to probe DirectInput controllers.");
             return lines;
         }
 

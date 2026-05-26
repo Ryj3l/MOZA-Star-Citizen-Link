@@ -13,12 +13,33 @@ public sealed class AppSettingsStore
     private readonly string _settingsPath;
 
     public AppSettingsStore()
+        : this(DefaultSettingsPath())
+    {
+    }
+
+    // Test seam (internal + InternalsVisibleTo): lets unit tests point the store at a temp file so the
+    // §14.2-#4 corrupted-file recovery and the GameLogPathProvider policy can be exercised hermetically,
+    // without touching the real user settings file. The Load/Save recovery logic is unchanged — only the
+    // path source is injectable. Precedent: DropRateMonitor's test ctor, MainViewModel's internal ctor.
+    internal AppSettingsStore(string settingsFilePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(settingsFilePath);
+        var directory = Path.GetDirectoryName(settingsFilePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        _settingsPath = settingsFilePath;
+    }
+
+    private static string DefaultSettingsPath()
     {
         var directory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "MozaStarCitizen");
         Directory.CreateDirectory(directory);
-        _settingsPath = Path.Combine(directory, "settings.json");
+        return Path.Combine(directory, "settings.json");
     }
 
     public AppSettings Load()
