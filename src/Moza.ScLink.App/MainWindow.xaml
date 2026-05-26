@@ -57,10 +57,6 @@
         </Border>
 
         <DockPanel Grid.Row="2" Margin="0,0,0,12">
-            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
-                <Button Content="Start Monitoring" Command="{Binding StartCommand}" MinWidth="128" Margin="0,0,8,0" />
-                <Button Content="Stop" Command="{Binding StopCommand}" MinWidth="74" Margin="0,0,18,0" />
-            </StackPanel>
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="Test Quantum" Command="{Binding TestQuantumCommand}" MinWidth="112" Margin="0,0,8,0" />
                 <Button Content="Test Impact" Command="{Binding TestImpactCommand}" MinWidth="104" Margin="0,0,8,0" />

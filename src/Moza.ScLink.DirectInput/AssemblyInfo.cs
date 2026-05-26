@@ -1,10 +1,6 @@
 using System.Runtime.CompilerServices;
 
+// DirectInput.Tests exercises this project's internal members (VorticeDirectInputDevice internals).
+// The former App.Tests/Effects.Tests grants existed only for the legacy FallbackForceFeedbackDevice's
+// internal ctor, removed with the legacy device chain in T-27 (#15).
 [assembly: InternalsVisibleTo("Moza.ScLink.DirectInput.Tests")]
-
-// T-07 Issue #27 Pass-2 V9-bug-fix (C): App.Tests and Effects.Tests compose chains via
-// FallbackForceFeedbackDevice's internal convenience overload (flat-device-list form). Test-only
-// ctors are internal + InternalsVisibleTo per house style — keeps the public surface honest while
-// letting cross-layer test assemblies use the back-compat shape.
-[assembly: InternalsVisibleTo("Moza.ScLink.App.Tests")]
-[assembly: InternalsVisibleTo("Moza.ScLink.Effects.Tests")]

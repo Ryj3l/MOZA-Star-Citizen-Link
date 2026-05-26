@@ -22,6 +22,14 @@ public interface IGameLogPathProvider
     /// when nothing is detected.
     /// </summary>
     GameLogPathResolution AutoDetect();
+
+    /// <summary>
+    /// Persists an explicitly chosen path (the UI "Browse" affordance) so it is used on next launch.
+    /// The provider is the single owner of Game.log path persistence; the UI never writes settings
+    /// directly. Under the T-27 host-owned sensor lifecycle the path is resolved once at startup, so
+    /// Browse takes effect on the next launch (live re-point is deferred to T-17).
+    /// </summary>
+    GameLogPathResolution UseExplicitPath(string path);
 }
 
 /// <summary>Origin of a resolved Game.log path, so the UI can render status without re-running policy.</summary>
@@ -38,6 +46,9 @@ public enum GameLogPathOrigin
 
     /// <summary>No usable saved path; a freshly auto-detected log was used (and persisted).</summary>
     Detected,
+
+    /// <summary>The user explicitly chose a path (Browse); it was persisted for next launch.</summary>
+    Explicit,
 }
 
 /// <summary>Outcome of a Game.log path resolution.</summary>

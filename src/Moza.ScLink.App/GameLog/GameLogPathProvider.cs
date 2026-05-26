@@ -80,6 +80,14 @@ public sealed class GameLogPathProvider : IGameLogPathProvider
         return new GameLogPathResolution(detected, GameLogPathOrigin.Detected);
     }
 
+    /// <inheritdoc />
+    public GameLogPathResolution UseExplicitPath(string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+        _settingsStore.Save(new AppSettings { GameLogPath = path });
+        return new GameLogPathResolution(path, GameLogPathOrigin.Explicit);
+    }
+
     // Extracted verbatim from MainViewModel.PathsEqual (T-27 §14.2-#3 relocation).
     private static bool PathsEqual(string first, string second)
     {

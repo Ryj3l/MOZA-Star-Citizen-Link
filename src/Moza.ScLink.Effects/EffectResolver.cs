@@ -6,7 +6,8 @@ using Moza.ScLink.Core.Resolver;
 using Moza.ScLink.Effects.Catalogs;
 
 // Disambiguate the §5 domain ForceEffect (Core.Effects, wrapped by PlayEffectCommand) from the legacy
-// Core.Models.ForceEffect that the soon-to-be-removed ForceFeedbackController uses (CS0104).
+// Core.Models.ForceEffect of the same simple name in a different namespace, so the unqualified name
+// resolves unambiguously (CS0104).
 using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
 
 namespace Moza.ScLink.Effects;
