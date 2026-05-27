@@ -5,6 +5,10 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <StartupObject>Moza.ScLink.App.Program</StartupObject>
+    <!-- T-16 PR2: the [LibraryImport] source generator (used by GlobalHotkey for the emergency-stop
+         hotkey P/Invoke) emits unsafe marshalling stubs (delegate* unmanaged), so SYSLIB1062 requires
+         this flag. There is no hand-written unsafe code; this posture is bounded to the App project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <!-- T-27: App.xaml is a Page (not ApplicationDefinition) so the WPF SDK does not generate an
