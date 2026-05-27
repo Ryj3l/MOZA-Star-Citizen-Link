@@ -146,9 +146,13 @@ public static class Program
         services.AddSingleton<IGameLogPathProvider, GameLogPathProvider>();
 
         // Canonical force-feedback device: unwrapped VorticeDirectInputDevice if an allowlisted device
-        // enumerates, else the LoggingNullForceFeedbackDevice (no-hardware preview). DeviceInitializer
-        // calls InitializeAsync at host-start (after the main window is shown — see App.OnStartup).
-        services.AddSingleton<IForceFeedbackDevice>(_ => ForceFeedbackDeviceFactory.CreateCanonical());
+        // enumerates, else the PreviewForceFeedbackDevice (no-hardware preview). The decision is made ONCE
+        // here at startup; forcePreviewMode (persisted user setting, T-17) is resolved from AppSettingsStore
+        // and composes with MOZA_SC_OUTPUT=Preview inside the factory. DeviceInitializer calls
+        // InitializeAsync at host-start (after the main window is shown — see App.OnStartup).
+        services.AddSingleton<IForceFeedbackDevice>(sp =>
+            ForceFeedbackDeviceFactory.CreateCanonical(
+                sp.GetRequiredService<AppSettingsStore>().Load().ForcePreviewMode));
 
         // The Game.log sensor (T-11). Its path is resolved once at startup via the provider; an empty
         // path (clean machine) is tolerated — the underlying tailer idles until the file appears.

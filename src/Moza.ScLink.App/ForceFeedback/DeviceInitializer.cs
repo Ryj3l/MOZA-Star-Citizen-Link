@@ -14,7 +14,7 @@ namespace Moza.ScLink.App.ForceFeedback;
 /// <remarks>
 /// The App resolves and shows <c>MainWindow</c> before <c>host.Start()</c> (T-27 Fork-1 refinement) so
 /// the main-window HWND is valid here: <c>VorticeDirectInputDevice.InitializeAsync</c> passes it to
-/// <c>SetCooperativeLevel(Exclusive|Background)</c>. The no-hardware <c>LoggingNullForceFeedbackDevice</c>
+/// <c>SetCooperativeLevel(Exclusive|Background)</c>. The no-hardware <c>PreviewForceFeedbackDevice</c>
 /// needs no HWND. Device disposal is the container's responsibility (the device is an
 /// <see cref="IAsyncDisposable"/> singleton), so <see cref="StopAsync"/> is a no-op.
 /// </remarks>

@@ -11,7 +11,7 @@ namespace Moza.ScLink.App.ForceFeedback;
 public static class ForceFeedbackDeviceFactory
 {
     // R5: bridges Serilog to Microsoft.Extensions.Logging so the canonical VorticeDirectInputDevice and
-    // the LoggingNullForceFeedbackDevice (both ILogger<T>-constructed) receive a real logger. Created
+    // the PreviewForceFeedbackDevice (both ILogger<T>-constructed) receive a real logger. Created
     // once, reused across calls, never disposed — its lifetime matches the app lifetime; Serilog
     // tolerates this (Program.Main owns Log.CloseAndFlush).
     private static readonly ILoggerFactory _loggerFactory =
@@ -28,15 +28,25 @@ public static class ForceFeedbackDeviceFactory
     private static DeviceAllowlist? _allowlist;
 
     /// <summary>
-    /// T-27 canonical device factory. Decides ONCE at startup: the unwrapped canonical
-    /// <see cref="VorticeDirectInputDevice"/> if an allowlisted DirectInput device enumerates, otherwise
-    /// the <see cref="LoggingNullForceFeedbackDevice"/> no-hardware fallback. <c>MOZA_SC_OUTPUT=Preview</c>
-    /// forces the fallback without enumerating (dev affordance on a machine that has hardware). Canonical
-    /// hot-plug + an SDK-bridge tier on this interface are tracked as a follow-up (PRP §10.1, line 1011).
+    /// Canonical device factory (T-27 host-start; T-17 preview formalization). Decides ONCE at startup:
+    /// the unwrapped canonical <see cref="VorticeDirectInputDevice"/> if an allowlisted DirectInput device
+    /// enumerates, otherwise the <see cref="PreviewForceFeedbackDevice"/> no-hardware preview. Preview is
+    /// forced — without enumerating — when <paramref name="forcePreview"/> is <see langword="true"/> (the
+    /// persisted <see cref="Profiles.Settings.AppSettings.ForcePreviewMode"/> user setting) or
+    /// <c>MOZA_SC_OUTPUT=Preview</c> is set (dev affordance); the two compose, either one forces preview.
+    /// Canonical hot-plug + an SDK-bridge tier on this interface are tracked as a follow-up (PRP §10.1, line 1011).
     /// </summary>
-    public static Moza.ScLink.Core.Devices.IForceFeedbackDevice CreateCanonical()
+    /// <param name="forcePreview">
+    /// When <see langword="true"/>, return the preview device without enumerating hardware (used to honor a
+    /// user with a base attached who has opted into preview). Resolved by the caller from
+    /// <see cref="Profiles.Settings.AppSettings.ForcePreviewMode"/>.
+    /// </param>
+    public static Moza.ScLink.Core.Devices.IForceFeedbackDevice CreateCanonical(bool forcePreview)
     {
-        if (ParseOutputMode(Environment.GetEnvironmentVariable("MOZA_SC_OUTPUT")) != ForceFeedbackOutputMode.Preview)
+        var previewForced = forcePreview
+            || ParseOutputMode(Environment.GetEnvironmentVariable("MOZA_SC_OUTPUT")) == ForceFeedbackOutputMode.Preview;
+
+        if (!previewForced)
         {
             var device = TryEnumerateAllowlistedVorticeDevice();
             if (device is not null)
@@ -45,13 +55,13 @@ public static class ForceFeedbackDeviceFactory
             }
         }
 
-        return new LoggingNullForceFeedbackDevice(
-            _loggerFactory.CreateLogger<LoggingNullForceFeedbackDevice>());
+        return new PreviewForceFeedbackDevice(
+            _loggerFactory.CreateLogger<PreviewForceFeedbackDevice>());
     }
 
     // Enumerates allowlisted DirectInput force-feedback devices and returns the first as an unwrapped
     // canonical VorticeDirectInputDevice. Returns null when nothing is allowlisted or enumeration fails —
-    // CreateCanonical then falls back to the logging-null device.
+    // CreateCanonical then falls back to the preview device.
     private static VorticeDirectInputDevice? TryEnumerateAllowlistedVorticeDevice()
     {
         try
@@ -85,7 +95,7 @@ public static class ForceFeedbackDeviceFactory
         }
         catch (Exception ex)
         {
-            // A COM/enumeration failure degrades to the logging-null device rather than crashing app
+            // A COM/enumeration failure degrades to the preview device rather than crashing app
             // startup. CA1031 is .editorconfig 'suggestion' severity — this comment is the justification.
             AppLog.Write(ex, "DirectInput canonical force-feedback enumeration failed");
             return null;
