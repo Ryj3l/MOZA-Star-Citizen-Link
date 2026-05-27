@@ -5,6 +5,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
+using Moza.ScLink.App.ForceFeedback;
 using Moza.ScLink.App.GameLog;
 using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Devices;
@@ -12,6 +13,7 @@ using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Models;
 using Moza.ScLink.Core.Sensors;
 using Moza.ScLink.Diagnostics;
+using Moza.ScLink.Profiles.Settings;
 
 namespace Moza.ScLink.App.ViewModels;
 
@@ -37,20 +39,35 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly IEventBus _bus;
     private readonly IGameLogPathProvider _pathProvider;
     private readonly IForceFeedbackDevice _device;
+    private readonly AppSettingsStore _settingsStore;
+
+    // Non-null only when the canonical device is the no-hardware previewer (T-17). The cast — not a separate
+    // DI registration — is the seam: a real VorticeDirectInputDevice does not implement IPreviewCommandSource,
+    // so this is null for real hardware and IsPreviewMode is false (banner hidden).
+    private readonly IPreviewCommandSource? _previewSource;
+    private readonly IDisposable? _previewSubscription;
 
     private string _gameLogPath = string.Empty;
     private string _status = "Ready.";
     private string _outputName = string.Empty;
     private string _outputStatus = string.Empty;
+    private bool _forcePreviewMode;
 
-    public MainViewModel(IEventBus bus, IGameLogPathProvider pathProvider, IForceFeedbackDevice device)
+    public MainViewModel(
+        IEventBus bus,
+        IGameLogPathProvider pathProvider,
+        IForceFeedbackDevice device,
+        AppSettingsStore settingsStore)
     {
         ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(pathProvider);
         ArgumentNullException.ThrowIfNull(device);
+        ArgumentNullException.ThrowIfNull(settingsStore);
         _bus = bus;
         _pathProvider = pathProvider;
         _device = device;
+        _settingsStore = settingsStore;
+        _forcePreviewMode = settingsStore.Load().ForcePreviewMode;
 
         AutoDetectCommand = new RelayCommand(_ => AutoDetect());
         BrowseCommand = new RelayCommand(_ => Browse());
@@ -66,6 +83,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         OutputName = _device.DisplayName;
         OutputStatus = _device.State.ToUserFacingString();
         _device.StateChanged += OnDeviceStateChanged;
+
+        // Preview seam: subscribe to the live command stream when the canonical device is the previewer.
+        // The subject publishes on the pipeline's background thread, so AddPreviewCommand marshals onto the
+        // UI thread via Dispatch. Subscription is disposed in Dispose.
+        _previewSource = device as IPreviewCommandSource;
+        _previewSubscription = _previewSource?.Commands.Subscribe(new PreviewObserver(this));
 
         ApplyResolution(_pathProvider.ResolveAtStartup());
         RefreshDiagnostics(includeExtendedDiagnostics: false);
@@ -100,6 +123,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<string> Events { get; } = [];
 
     public ObservableCollection<string> Diagnostics { get; } = [];
+
+    /// <summary>Last-50 preview command stream (T-17); populated only when <see cref="IsPreviewMode"/> is true.</summary>
+    public ObservableCollection<PreviewedCommand> PreviewCommands { get; } = [];
+
+    /// <summary>
+    /// True when the canonical device is the no-hardware previewer — drives the amber preview banner.
+    /// A real hardware device does not implement <see cref="IPreviewCommandSource"/>, so this is false.
+    /// </summary>
+    public bool IsPreviewMode => _previewSource is not null;
+
+    /// <summary>
+    /// User toggle to force preview mode on the next launch even with hardware present (T-17). Persisted to
+    /// <see cref="AppSettings.ForcePreviewMode"/> via <see cref="AppSettingsStore.Update"/> (so a sibling
+    /// GameLogPath is preserved). Applied once at startup — toggling it does not hot-swap the live device.
+    /// </summary>
+    public bool ForcePreviewMode
+    {
+        get => _forcePreviewMode;
+        set
+        {
+            if (SetField(ref _forcePreviewMode, value))
+            {
+                _settingsStore.Update(s => s.ForcePreviewMode = value);
+                AppLog.Write($"Force-preview-mode set to {value}; applies on next launch.");
+            }
+        }
+    }
 
     public ICommand AutoDetectCommand { get; }
 
@@ -192,6 +242,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Events.RemoveAt(Events.Count - 1);
         }
+    }
+
+    // Mirrors AddEvent's Insert(0)/RemoveAt cap idiom (capped at 50 per the acceptance criterion). Marshalled
+    // onto the UI thread because the previewer's subject publishes on the pipeline's background thread.
+    private void AddPreviewCommand(PreviewedCommand command)
+    {
+        Dispatch(() =>
+        {
+            PreviewCommands.Insert(0, command);
+            while (PreviewCommands.Count > 50)
+            {
+                PreviewCommands.RemoveAt(PreviewCommands.Count - 1);
+            }
+        });
     }
 
     private async Task RefreshDiagnosticsAsync()
@@ -316,5 +380,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public void Dispose()
     {
         _device.StateChanged -= OnDeviceStateChanged;
+        _previewSubscription?.Dispose();
+    }
+
+    // Forwards the previewer's command stream to the capped PreviewCommands collection. A small private
+    // observer rather than making the public view model an IObserver — keeps the contract off the surface.
+    private sealed class PreviewObserver(MainViewModel owner) : IObserver<PreviewedCommand>
+    {
+        public void OnNext(PreviewedCommand value) => owner.AddPreviewCommand(value);
+
+        public void OnError(Exception error)
+        {
+        }
+
+        public void OnCompleted()
+        {
+        }
     }
 }
