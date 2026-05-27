@@ -148,7 +148,9 @@
                                     <TextBlock TextWrapping="Wrap">
                                         <TextBlock.Text>
                                             <MultiBinding StringFormat="{}{0:HH:mm:ss.fff}  {1}  {2}  i={3:0.##}  active={4}">
-                                                <Binding Path="WallClock" />
+                                                <!-- LocalDateTime: WallClock (= command.IssuedAt) is UTC (EffectResolver),
+                                                     so display in local time to match the Event Feed's local timestamps. -->
+                                                <Binding Path="WallClock.LocalDateTime" />
                                                 <Binding Path="CommandType" />
                                                 <Binding Path="EffectId" />
                                                 <Binding Path="FinalIntensity" />
