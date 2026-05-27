@@ -73,4 +73,21 @@ public sealed class AppSettingsStore
         var json = JsonSerializer.Serialize(settings, SaveOptions);
         File.WriteAllText(_settingsPath, json);
     }
+
+    /// <summary>
+    /// Loads the current settings, applies <paramref name="mutate"/>, and saves the result. Use this —
+    /// not <see cref="Save"/> with a freshly constructed <see cref="AppSettings"/> — whenever a single
+    /// field changes, so sibling fields are preserved. <see cref="Save"/> serializes the whole object,
+    /// so <c>Save(new AppSettings { GameLogPath = x })</c> silently resets every other field to its
+    /// default (e.g. <see cref="AppSettings.ForcePreviewMode"/> back to <c>false</c>). Load-mutate-save
+    /// is correct for value fields, where a field-merging Save could not distinguish "unset" from
+    /// "deliberately false".
+    /// </summary>
+    public void Update(Action<AppSettings> mutate)
+    {
+        ArgumentNullException.ThrowIfNull(mutate);
+        var settings = Load();
+        mutate(settings);
+        Save(settings);
+    }
 }

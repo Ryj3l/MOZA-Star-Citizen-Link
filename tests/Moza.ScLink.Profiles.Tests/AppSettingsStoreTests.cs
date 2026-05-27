@@ -77,4 +77,64 @@ public sealed class AppSettingsStoreTests : IDisposable
 
         Assert.Equal(@"C:\Games\StarCitizen\LIVE\Game.log", settings.GameLogPath);
     }
+
+    [Fact]
+    public void SaveThenLoadRoundTripsForcePreviewMode()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings { ForcePreviewMode = true });
+
+        var settings = store.Load();
+
+        Assert.True(settings.ForcePreviewMode);
+    }
+
+    // Regression guard for the T-27 latent bug: whole-object Save with a freshly constructed
+    // AppSettings resets sibling fields. Update(Load-mutate-save) must preserve them. Without the
+    // fix, mutating ForcePreviewMode would null out a previously saved GameLogPath (and vice versa).
+    [Fact]
+    public void UpdatePreservesSiblingFields()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings { GameLogPath = @"C:\Games\StarCitizen\LIVE\Game.log" });
+
+        store.Update(s => s.ForcePreviewMode = true);
+
+        var settings = store.Load();
+        Assert.Equal(@"C:\Games\StarCitizen\LIVE\Game.log", settings.GameLogPath);
+        Assert.True(settings.ForcePreviewMode);
+    }
+
+    [Fact]
+    public void UpdateMutatingGameLogPathPreservesForcePreviewMode()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings { ForcePreviewMode = true });
+
+        store.Update(s => s.GameLogPath = @"D:\SC\Game.log");
+
+        var settings = store.Load();
+        Assert.True(settings.ForcePreviewMode);
+        Assert.Equal(@"D:\SC\Game.log", settings.GameLogPath);
+    }
+
+    [Fact]
+    public void UpdateOnMissingFileStartsFromDefault()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+
+        store.Update(s => s.ForcePreviewMode = true);
+
+        var settings = store.Load();
+        Assert.True(settings.ForcePreviewMode);
+        Assert.Null(settings.GameLogPath);
+    }
+
+    [Fact]
+    public void UpdateWithNullMutatorThrows()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+
+        Assert.Throws<ArgumentNullException>(() => store.Update(null!));
+    }
 }

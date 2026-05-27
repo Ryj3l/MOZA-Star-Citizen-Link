@@ -51,7 +51,7 @@ public sealed class GameLogPathProvider : IGameLogPathProvider
                 !PathsEqual(saved, detected) &&
                 IsNewerLog(detected, saved))
             {
-                _settingsStore.Save(new AppSettings { GameLogPath = detected });
+                _settingsStore.Update(s => s.GameLogPath = detected);
                 return new GameLogPathResolution(detected, GameLogPathOrigin.ReplacedWithNewer);
             }
 
@@ -60,7 +60,7 @@ public sealed class GameLogPathProvider : IGameLogPathProvider
 
         if (!string.IsNullOrWhiteSpace(detected))
         {
-            _settingsStore.Save(new AppSettings { GameLogPath = detected });
+            _settingsStore.Update(s => s.GameLogPath = detected);
             return new GameLogPathResolution(detected, GameLogPathOrigin.Detected);
         }
 
@@ -76,7 +76,7 @@ public sealed class GameLogPathProvider : IGameLogPathProvider
             return new GameLogPathResolution(null, GameLogPathOrigin.None);
         }
 
-        _settingsStore.Save(new AppSettings { GameLogPath = detected });
+        _settingsStore.Update(s => s.GameLogPath = detected);
         return new GameLogPathResolution(detected, GameLogPathOrigin.Detected);
     }
 
@@ -84,7 +84,7 @@ public sealed class GameLogPathProvider : IGameLogPathProvider
     public GameLogPathResolution UseExplicitPath(string path)
     {
         ArgumentNullException.ThrowIfNull(path);
-        _settingsStore.Save(new AppSettings { GameLogPath = path });
+        _settingsStore.Update(s => s.GameLogPath = path);
         return new GameLogPathResolution(path, GameLogPathOrigin.Explicit);
     }
 
