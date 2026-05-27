@@ -16,4 +16,15 @@ public sealed class AppSettings
     /// </summary>
     [JsonPropertyName("forcePreviewMode")]
     public bool ForcePreviewMode { get; set; }
+
+    /// <summary>
+    /// The global hotkey that activates emergency stop, in human-readable form (default
+    /// <c>"Ctrl+Alt+F12"</c>): modifiers (Ctrl/Control, Alt, Shift, Win/Windows) and exactly one key
+    /// (F1–F24, a letter, or a digit) joined by <c>+</c>. Parsed by <c>HotkeyCombination.TryParse</c>
+    /// (T-16 PR2); a missing, blank, or unparseable value falls back to the default. Read once at
+    /// startup and registered once — no in-app rebind UI (hand-edit settings.json to change).
+    /// Persisted across launches; participates in the merge-safe <c>AppSettingsStore.Update</c> path.
+    /// </summary>
+    [JsonPropertyName("emergencyStopHotkey")]
+    public string EmergencyStopHotkey { get; set; } = "Ctrl+Alt+F12";
 }
