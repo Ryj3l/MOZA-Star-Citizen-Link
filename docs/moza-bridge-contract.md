@@ -22,7 +22,7 @@ extern "C" __declspec(dllexport) int __cdecl MozaBridge_StopEffect(
 extern "C" __declspec(dllexport) int __cdecl MozaBridge_StopAll();
 ```
 
-Effect kinds match `ForceEffectKind`:
+Effect kinds (the `effectKind` argument):
 
 - `0`: Periodic vibration, used for quantum spool.
 - `1`: Short bump, used for landing and impact.

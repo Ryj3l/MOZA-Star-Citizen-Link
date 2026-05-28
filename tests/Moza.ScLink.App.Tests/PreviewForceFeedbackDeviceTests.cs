@@ -5,10 +5,6 @@ using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 
-// Disambiguate from the legacy Moza.ScLink.Core.Models.ForceEffect — the canonical effect descriptor
-// carried by PlayEffectCommand lives in Core.Effects.
-using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
-
 namespace Moza.ScLink.App.Tests;
 
 /// <summary>
