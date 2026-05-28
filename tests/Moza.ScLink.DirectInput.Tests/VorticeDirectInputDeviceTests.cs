@@ -6,9 +6,6 @@ using Moza.ScLink.Core.Models;
 using NSubstitute;
 using SharpGen.Runtime;
 using Vortice.DirectInput;
-// Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect — same alias the
-// production VorticeDirectInputDevice.cs uses; both die when the legacy Models.ForceEffect is removed.
-using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
 
 namespace Moza.ScLink.DirectInput.Tests;
 

@@ -7,9 +7,6 @@ using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 using SharpGen.Runtime;
 using Vortice.DirectInput;
-// Disambiguate the T-06 effect record from the legacy Moza.ScLink.Core.Models.ForceEffect
-// (the legacy type is consumed only by DirectInputForceFeedbackDevice.cs, deleted in T-07 M12).
-using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
 
 namespace Moza.ScLink.DirectInput;
 

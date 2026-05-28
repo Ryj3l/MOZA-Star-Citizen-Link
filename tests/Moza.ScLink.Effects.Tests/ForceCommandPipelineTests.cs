@@ -6,8 +6,6 @@ using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 using Moza.ScLink.Core.Safety;
 
-using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
-
 namespace Moza.ScLink.Effects.Tests;
 
 public sealed class ForceCommandPipelineTests

@@ -2,7 +2,6 @@ using System.Text.Json;
 using FluentAssertions;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
-using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect; // disambiguates from legacy Moza.ScLink.Core.Models.ForceEffect
 
 namespace Moza.ScLink.Core.Tests.Effects;
 

@@ -4,10 +4,6 @@ using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
 
-// Disambiguate the §5 domain ForceEffect (wrapped by PlayEffectCommand) from the legacy Core.Models.ForceEffect
-// (CS0104) — same alias the resolver uses.
-using ForceEffect = Moza.ScLink.Core.Effects.ForceEffect;
-
 namespace Moza.ScLink.Effects.Tests;
 
 public sealed class SafetyLimiterStageTests
