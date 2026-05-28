@@ -19,6 +19,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -26,6 +27,9 @@
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="Auto-detect" Command="{Binding AutoDetectCommand}" MinWidth="96" Margin="0,0,8,0" />
                 <Button Content="Browse" Command="{Binding BrowseCommand}" MinWidth="78" />
+                <Button Content="E-STOP" Command="{Binding ActivateEmergencyStopCommand}"
+                        MinWidth="84" Margin="16,0,0,0"
+                        Background="#C62828" Foreground="White" FontWeight="Bold" />
             </StackPanel>
             <StackPanel>
                 <TextBlock Text="MOZA Star Citizen Link" FontSize="22" FontWeight="SemiBold" Foreground="#17212B" />
@@ -33,7 +37,23 @@
             </StackPanel>
         </DockPanel>
 
+        <!-- Red emergency-stop banner stacked ABOVE the amber preview banner (urgency hierarchy). Both
+             are conditional and coexist; the Clear button is banner-scoped (relevant only while active). -->
         <Border Grid.Row="1"
+                Background="#C62828" BorderBrush="#8E1F1F" BorderThickness="1" CornerRadius="3"
+                Padding="12,8" Margin="0,0,0,12"
+                Visibility="{Binding IsEmergencyStopActive, Converter={StaticResource BoolToVisibility}}">
+            <DockPanel>
+                <Button DockPanel.Dock="Right"
+                        Content="Clear"
+                        Command="{Binding ClearEmergencyStopCommand}"
+                        MinWidth="84" VerticalAlignment="Center" />
+                <TextBlock Foreground="White" FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Center"
+                           Text="EMERGENCY STOP ACTIVE — force feedback halted. Press Clear to resume." />
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="2"
                 Background="#FFF4D6" BorderBrush="#E0B43C" BorderThickness="1" CornerRadius="3"
                 Padding="12,8" Margin="0,0,0,12"
                 Visibility="{Binding IsPreviewMode, Converter={StaticResource BoolToVisibility}}">
@@ -41,7 +61,7 @@
                        Text="Preview mode — no device connected (or preview forced). Commands are logged and streamed, not played." />
         </Border>
 
-        <Border Grid.Row="2" Background="White" BorderBrush="#D7DDE4" BorderThickness="1" Padding="14" Margin="0,0,0,12">
+        <Border Grid.Row="3" Background="White" BorderBrush="#D7DDE4" BorderThickness="1" Padding="14" Margin="0,0,0,12">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="130" />
@@ -68,7 +88,7 @@
             </Grid>
         </Border>
 
-        <DockPanel Grid.Row="3" Margin="0,0,0,12">
+        <DockPanel Grid.Row="4" Margin="0,0,0,12">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                 <Button Content="Test Quantum" Command="{Binding TestQuantumCommand}" MinWidth="112" Margin="0,0,8,0" />
                 <Button Content="Test Impact" Command="{Binding TestImpactCommand}" MinWidth="104" Margin="0,0,8,0" />
@@ -79,7 +99,7 @@
                       VerticalAlignment="Center" Foreground="#2A3440" />
         </DockPanel>
 
-        <Grid Grid.Row="4">
+        <Grid Grid.Row="5">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="320" />

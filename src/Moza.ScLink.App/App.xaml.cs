@@ -3,19 +3,24 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Moza.ScLink.App.Input;
 using Moza.ScLink.Core.Diagnostics;
+using Moza.ScLink.Core.Safety;
+using Moza.ScLink.Profiles.Settings;
 
 namespace Moza.ScLink.App;
 
 [SuppressMessage(
     "Microsoft.Design",
     "CA1001:TypesThatOwnDisposableFieldsShouldBeDisposable",
-    Justification = "WPF Application instances are not disposed by callers; mutex is released and disposed in OnExit per WPF lifecycle. The host is owned (disposed) by Program.Main's using statement.")]
+    Justification = "WPF Application instances are not disposed by callers; the mutex and the emergency-stop global hotkey are released and disposed in OnExit per WPF lifecycle. The host is owned (disposed) by Program.Main's using statement.")]
 public partial class App : System.Windows.Application
 {
     private readonly IHost _host;
     private Mutex? _singleInstanceMutex;
     private bool _ownsSingleInstanceMutex;
+    private GlobalHotkey? _emergencyStopHotkey;
 
     public App(IHost host)
     {
@@ -71,10 +76,33 @@ public partial class App : System.Windows.Application
         var mainWindow = _host.Services.GetRequiredService<MainWindow>();
         mainWindow.Show();
         _host.Start();
+
+        // T-16 PR2: register the global emergency-stop hotkey on the UI thread AFTER the host has
+        // started (IEmergencyStop is now resolvable and live). The dedicated message-only window's
+        // messages are pumped by this thread's WPF Dispatcher, so the hotkey survives the main window
+        // being hidden or minimized to tray. Only the mutex-owning instance reaches here (a second
+        // instance returns above), so OnExit can dispose with a null-check.
+        var hotkeyText = _host.Services.GetRequiredService<AppSettingsStore>().Load().EmergencyStopHotkey;
+        if (!HotkeyCombination.TryParse(hotkeyText, out var hotkey))
+        {
+            AppLog.Write($"Emergency-stop hotkey '{hotkeyText}' is not a valid combination; falling back to {HotkeyCombination.DefaultText}.");
+            hotkey = HotkeyCombination.Default;
+        }
+
+        _emergencyStopHotkey = new GlobalHotkey(
+            hotkey,
+            _host.Services.GetRequiredService<IEmergencyStop>(),
+            _host.Services.GetRequiredService<ILogger<GlobalHotkey>>());
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // T-16 PR2: unregister the hotkey and destroy its window on the UI thread (the thread that
+        // created it) before teardown. Only the mutex-owning instance ever constructed it, so a
+        // null-check suffices.
+        _emergencyStopHotkey?.Dispose();
+        _emergencyStopHotkey = null;
+
         // Only the instance that owns the mutex started the host. Stop it (drains the hosted pipeline and
         // disposes the canonical device) before WPF tears down; Program.Main's `using` disposes the host.
         if (_ownsSingleInstanceMutex)

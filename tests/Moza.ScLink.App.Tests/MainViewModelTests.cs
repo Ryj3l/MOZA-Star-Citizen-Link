@@ -7,8 +7,10 @@ using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Effects;
 using Moza.ScLink.Core.Models;
+using Moza.ScLink.Core.Safety;
 using Moza.ScLink.Core.Sensors;
 using Moza.ScLink.Diagnostics;
+using Moza.ScLink.Effects;
 using Moza.ScLink.Profiles.Settings;
 
 namespace Moza.ScLink.App.Tests;
@@ -43,8 +45,10 @@ public sealed class MainViewModelTests : IDisposable
         IEventBus bus,
         StubGameLogPathProvider? provider = null,
         IForceFeedbackDevice? device = null,
-        AppSettingsStore? store = null) =>
-        new(bus, provider ?? new StubGameLogPathProvider(), device ?? new RecordingCanonicalDevice(), store ?? NewStore());
+        AppSettingsStore? store = null,
+        IEmergencyStop? emergencyStop = null) =>
+        new(bus, provider ?? new StubGameLogPathProvider(), device ?? new RecordingCanonicalDevice(), store ?? NewStore(),
+            emergencyStop ?? new EmergencyStop(NullLogger<EmergencyStop>.Instance));
 
     private static PreviewForceFeedbackDevice NewPreviewDevice() =>
         new(NullLogger<PreviewForceFeedbackDevice>.Instance);
@@ -179,5 +183,75 @@ public sealed class MainViewModelTests : IDisposable
         var reloaded = NewStore().Load();
         Assert.True(reloaded.ForcePreviewMode);
         Assert.Equal(@"C:\sc\Game.log", reloaded.GameLogPath); // sibling field preserved via Update
+    }
+
+    [Fact]
+    public async Task EmergencyStopActivationFlipsStateAndGatesCommands()
+    {
+        var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);
+        using var vm = Create(new EventBus(), emergencyStop: estop);
+
+        Assert.False(vm.IsEmergencyStopActive);
+        Assert.True(vm.ActivateEmergencyStopCommand.CanExecute(null));
+        Assert.False(vm.ClearEmergencyStopCommand.CanExecute(null));
+
+        await estop.ActivateAsync("test");
+
+        Assert.True(vm.IsEmergencyStopActive);
+        Assert.False(vm.ActivateEmergencyStopCommand.CanExecute(null)); // disabled while active
+        Assert.True(vm.ClearEmergencyStopCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task EmergencyStopClearResetsStateAndGatesCommands()
+    {
+        var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);
+        using var vm = Create(new EventBus(), emergencyStop: estop);
+        await estop.ActivateAsync("test");
+
+        await estop.ClearAsync();
+
+        Assert.False(vm.IsEmergencyStopActive);
+        Assert.True(vm.ActivateEmergencyStopCommand.CanExecute(null));
+        Assert.False(vm.ClearEmergencyStopCommand.CanExecute(null)); // disabled once cleared
+    }
+
+    [Fact]
+    public async Task EmergencyStopActivationRaisesCanExecuteChangedOnBothCommands()
+    {
+        var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);
+        using var vm = Create(new EventBus(), emergencyStop: estop);
+        var activateRaised = 0;
+        var clearRaised = 0;
+        vm.ActivateEmergencyStopCommand.CanExecuteChanged += (_, _) => activateRaised++;
+        vm.ClearEmergencyStopCommand.CanExecuteChanged += (_, _) => clearRaised++;
+
+        await estop.ActivateAsync("test");
+
+        Assert.True(activateRaised > 0);
+        Assert.True(clearRaised > 0);
+    }
+
+    [Fact]
+    public async Task EmergencyStopActivationAddsEventFeedEntry()
+    {
+        var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);
+        using var vm = Create(new EventBus(), emergencyStop: estop);
+
+        await estop.ActivateAsync("test");
+
+        Assert.Contains(vm.Events, e => e.Contains("EMERGENCY STOP", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ActivateEmergencyStopCommandDrivesTheAuthority()
+    {
+        var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);
+        using var vm = Create(new EventBus(), emergencyStop: estop);
+
+        vm.ActivateEmergencyStopCommand.Execute(null);
+
+        Assert.True(estop.IsActive);
+        Assert.True(vm.IsEmergencyStopActive);
     }
 }

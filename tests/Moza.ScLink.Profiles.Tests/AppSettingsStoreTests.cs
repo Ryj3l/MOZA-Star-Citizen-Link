@@ -137,4 +137,38 @@ public sealed class AppSettingsStoreTests : IDisposable
 
         Assert.Throws<ArgumentNullException>(() => store.Update(null!));
     }
+
+    [Fact]
+    public void LoadWithMissingFileReturnsDefaultEmergencyStopHotkey()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+
+        var settings = store.Load();
+
+        Assert.Equal("Ctrl+Alt+F12", settings.EmergencyStopHotkey);
+    }
+
+    [Fact]
+    public void SaveThenLoadRoundTripsEmergencyStopHotkey()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings { EmergencyStopHotkey = "Ctrl+Shift+P" });
+
+        var settings = store.Load();
+
+        Assert.Equal("Ctrl+Shift+P", settings.EmergencyStopHotkey);
+    }
+
+    [Fact]
+    public void UpdateMutatingForcePreviewModePreservesEmergencyStopHotkey()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings { EmergencyStopHotkey = "Alt+F9" });
+
+        store.Update(s => s.ForcePreviewMode = true);
+
+        var settings = store.Load();
+        Assert.Equal("Alt+F9", settings.EmergencyStopHotkey);
+        Assert.True(settings.ForcePreviewMode);
+    }
 }

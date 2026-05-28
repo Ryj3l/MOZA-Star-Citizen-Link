@@ -11,6 +11,7 @@ using Moza.ScLink.Core.Bus;
 using Moza.ScLink.Core.Devices;
 using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Models;
+using Moza.ScLink.Core.Safety;
 using Moza.ScLink.Core.Sensors;
 using Moza.ScLink.Diagnostics;
 using Moza.ScLink.Profiles.Settings;
@@ -40,6 +41,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly IGameLogPathProvider _pathProvider;
     private readonly IForceFeedbackDevice _device;
     private readonly AppSettingsStore _settingsStore;
+    private readonly IEmergencyStop _emergencyStop;
 
     // Non-null only when the canonical device is the no-hardware previewer (T-17). The cast — not a separate
     // DI registration — is the seam: a real VorticeDirectInputDevice does not implement IPreviewCommandSource,
@@ -52,22 +54,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _outputName = string.Empty;
     private string _outputStatus = string.Empty;
     private bool _forcePreviewMode;
+    private bool _isEmergencyStopActive;
+
+    // Held as concrete RelayCommand (not ICommand) so the Activated/Cleared handlers can call
+    // RaiseCanExecuteChanged when the authority's state flips.
+    private readonly RelayCommand _activateEmergencyStopCommand;
+    private readonly RelayCommand _clearEmergencyStopCommand;
 
     public MainViewModel(
         IEventBus bus,
         IGameLogPathProvider pathProvider,
         IForceFeedbackDevice device,
-        AppSettingsStore settingsStore)
+        AppSettingsStore settingsStore,
+        IEmergencyStop emergencyStop)
     {
         ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(pathProvider);
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(settingsStore);
+        ArgumentNullException.ThrowIfNull(emergencyStop);
         _bus = bus;
         _pathProvider = pathProvider;
         _device = device;
         _settingsStore = settingsStore;
+        _emergencyStop = emergencyStop;
         _forcePreviewMode = settingsStore.Load().ForcePreviewMode;
+        _isEmergencyStopActive = emergencyStop.IsActive;
 
         AutoDetectCommand = new RelayCommand(_ => AutoDetect());
         BrowseCommand = new RelayCommand(_ => Browse());
@@ -79,10 +91,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         TestAtmosphereCommand = new RelayCommand(_ =>
             PublishTestEvent(AtmosphereEnteredEventType, intensity: 0.22, duration: TimeSpan.Zero));
         RefreshDiagnosticsCommand = new RelayCommand(_ => RefreshDiagnosticsAsync());
+        _activateEmergencyStopCommand = new RelayCommand(_ => _emergencyStop.ActivateAsync("ui"), _ => !IsEmergencyStopActive);
+        _clearEmergencyStopCommand = new RelayCommand(_ => _emergencyStop.ClearAsync(), _ => IsEmergencyStopActive);
 
         OutputName = _device.DisplayName;
         OutputStatus = _device.State.ToUserFacingString();
         _device.StateChanged += OnDeviceStateChanged;
+        _emergencyStop.Activated += OnEmergencyStopActivated;
+        _emergencyStop.Cleared += OnEmergencyStopCleared;
 
         // Preview seam: subscribe to the live command stream when the canonical device is the previewer.
         // The subject publishes on the pipeline's background thread, so AddPreviewCommand marshals onto the
@@ -162,6 +178,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand TestAtmosphereCommand { get; }
 
     public ICommand RefreshDiagnosticsCommand { get; }
+
+    public ICommand ActivateEmergencyStopCommand => _activateEmergencyStopCommand;
+
+    public ICommand ClearEmergencyStopCommand => _clearEmergencyStopCommand;
+
+    /// <summary>
+    /// True while emergency stop is engaged (authoritative state owned by <see cref="IEmergencyStop"/>).
+    /// Drives the red ACTIVE banner's visibility and gates both e-stop commands (activate disabled while
+    /// active, clear enabled only while active). Updated from the Activated/Cleared events via Dispatch.
+    /// </summary>
+    public bool IsEmergencyStopActive
+    {
+        get => _isEmergencyStopActive;
+        private set => SetField(ref _isEmergencyStopActive, value);
+    }
 
     // Commands are surfaced through RelayCommand (Func<object?, Task>); these affordances are synchronous,
     // so they complete the returned Task immediately.
@@ -339,6 +370,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         });
     }
 
+    private void OnEmergencyStopActivated(object? sender, EmergencyStopActivatedEventArgs e)
+    {
+        Dispatch(() =>
+        {
+            IsEmergencyStopActive = true;
+            _activateEmergencyStopCommand.RaiseCanExecuteChanged();
+            _clearEmergencyStopCommand.RaiseCanExecuteChanged();
+            AddEvent($"{e.ActivatedAt.ToLocalTime():HH:mm:ss} EMERGENCY STOP activated (reason: {e.Reason}).");
+        });
+    }
+
+    private void OnEmergencyStopCleared(object? sender, EventArgs e)
+    {
+        Dispatch(() =>
+        {
+            IsEmergencyStopActive = false;
+            _activateEmergencyStopCommand.RaiseCanExecuteChanged();
+            _clearEmergencyStopCommand.RaiseCanExecuteChanged();
+            AddEvent($"{DateTimeOffset.Now:HH:mm:ss} Emergency stop cleared — output resumed.");
+        });
+    }
+
     private static void Dispatch(Action action)
     {
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
@@ -380,6 +433,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public void Dispose()
     {
         _device.StateChanged -= OnDeviceStateChanged;
+        _emergencyStop.Activated -= OnEmergencyStopActivated;
+        _emergencyStop.Cleared -= OnEmergencyStopCleared;
         _previewSubscription?.Dispose();
     }
 
