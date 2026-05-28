@@ -99,10 +99,6 @@ public static class Program
                        retainedFileCountLimit: 14,
                        fileSizeLimitBytes: 52_428_800L,
                        rollOnFileSizeLimit: true);
-#if DEBUG
-                cfg.WriteTo.Console(outputTemplate: OutputTemplate,
-                    formatProvider: CultureInfo.InvariantCulture);
-#endif
             });
     }
 
