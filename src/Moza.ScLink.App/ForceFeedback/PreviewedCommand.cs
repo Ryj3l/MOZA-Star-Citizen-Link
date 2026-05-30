@@ -1,3 +1,5 @@
+using Moza.ScLink.Core.Effects;
+
 namespace Moza.ScLink.App.ForceFeedback;
 
 /// <summary>
@@ -18,6 +20,12 @@ namespace Moza.ScLink.App.ForceFeedback;
 /// <param name="Duration">Effect duration (<see cref="System.TimeSpan.Zero"/> = sustained); <see langword="null"/> for Stop/StopAll.</param>
 /// <param name="DirectionX">Horizontal direction in [-1,1]; <see langword="null"/> for Stop/StopAll.</param>
 /// <param name="DirectionY">Vertical direction in [-1,1]; <see langword="null"/> for Stop/StopAll.</param>
+/// <param name="Envelope">
+/// The effect's ADSR envelope captured at <see cref="Core.Effects.ForceCommand.IssuedAt"/> — the
+/// same envelope the canonical device folds via T-28's Choice-A peak-anchored algorithm when
+/// rendering on hardware. <see langword="null"/> when the effect carries no envelope, and for
+/// Stop/StopAll (no effect).
+/// </param>
 /// <param name="ActiveCount">Count of active sustained effects after this command was processed.</param>
 public sealed record PreviewedCommand(
     DateTimeOffset WallClock,
@@ -28,4 +36,5 @@ public sealed record PreviewedCommand(
     TimeSpan? Duration,
     double? DirectionX,
     double? DirectionY,
+    ForceEnvelope? Envelope,
     int ActiveCount);

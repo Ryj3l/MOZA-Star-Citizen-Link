@@ -20,7 +20,8 @@ public sealed class PreviewForceFeedbackDeviceTests
     private static PreviewForceFeedbackDevice CreateDevice() =>
         new(NullLogger<PreviewForceFeedbackDevice>.Instance);
 
-    private static PlayEffectCommand Play(string? stateKey, string effectId = "effect", double intensity = 0.5) =>
+    private static PlayEffectCommand Play(string? stateKey, string effectId = "effect", double intensity = 0.5,
+        ForceEnvelope? envelope = null) =>
         new(
             new ForceEffect
             {
@@ -33,6 +34,7 @@ public sealed class PreviewForceFeedbackDeviceTests
                 DirectionY = -0.4,
                 IsSustained = stateKey is not null,
                 StateKey = stateKey,
+                Envelope = envelope,
             },
             intensity)
         { CommandId = $"play-{effectId}", IssuedAt = DateTimeOffset.UnixEpoch };
@@ -158,7 +160,30 @@ public sealed class PreviewForceFeedbackDeviceTests
         Assert.Equal(TimeSpan.FromMilliseconds(250), p.Duration);
         Assert.Equal(0.3, p.DirectionX);
         Assert.Equal(-0.4, p.DirectionY);
+        Assert.Null(p.Envelope); // default Play helper carries no envelope
         Assert.Equal(DateTimeOffset.UnixEpoch, p.WallClock); // clock-free: reuses command.IssuedAt
+    }
+
+    [Fact]
+    public async Task PlayWithEnvelopeProjectionCarriesEnvelope()
+    {
+        var (device, captured, subscription) = CreateSubscribedDevice();
+        await using var _ = device;
+        using var __ = subscription;
+
+        var envelope = new ForceEnvelope(
+            Attack: TimeSpan.FromMilliseconds(20),
+            Hold: TimeSpan.FromMilliseconds(10),
+            Decay: TimeSpan.FromMilliseconds(40),
+            Release: TimeSpan.FromMilliseconds(80),
+            AttackLevel: 0.6,
+            SustainLevel: 0.3);
+
+        await device.ExecuteAsync(Play("k1", envelope: envelope), CancellationToken.None);
+
+        var p = Assert.Single(captured);
+        // Record value-equality verifies all six envelope fields survived projection.
+        Assert.Equal(envelope, p.Envelope);
     }
 
     [Fact]
@@ -193,6 +218,21 @@ public sealed class PreviewForceFeedbackDeviceTests
         Assert.Null(stop.Duration);
         Assert.Null(stop.DirectionX);
         Assert.Null(stop.DirectionY);
+        Assert.Null(stop.Envelope);
+    }
+
+    [Fact]
+    public async Task StopAllAsyncProjectionHasNullEnvelope()
+    {
+        var (device, captured, subscription) = CreateSubscribedDevice();
+        await using var _ = device;
+        using var __ = subscription;
+
+        await device.StopAllAsync(CancellationToken.None);
+
+        var stopAll = Assert.Single(captured);
+        Assert.Equal(nameof(PreviewForceFeedbackDevice.StopAllAsync), stopAll.CommandType);
+        Assert.Null(stopAll.Envelope);
     }
 
     // ── Subject subscribe / publish / unsubscribe ─────────────────────────────────────────────────

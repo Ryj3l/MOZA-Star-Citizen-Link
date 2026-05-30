@@ -119,7 +119,7 @@ public sealed class PreviewForceFeedbackDevice : IForceFeedbackDevice, IPreviewC
         Log.StopAll(_logger, activeCount);
         // Project a synthetic StopAll so the diagnostics stream reflects the emergency-stop path too.
         _subject.Publish(new PreviewedCommand(
-            DateTimeOffset.UtcNow, nameof(StopAllAsync), null, null, null, null, null, null, activeCount));
+            DateTimeOffset.UtcNow, nameof(StopAllAsync), null, null, null, null, null, null, null, activeCount));
         return Task.CompletedTask;
     }
 
@@ -130,9 +130,9 @@ public sealed class PreviewForceFeedbackDevice : IForceFeedbackDevice, IPreviewC
         PlayEffectCommand play => new PreviewedCommand(
             play.IssuedAt, nameof(PlayEffectCommand), play.Effect.EffectId, play.FinalIntensity,
             play.Effect.FrequencyHz, play.Effect.Duration, play.Effect.DirectionX, play.Effect.DirectionY,
-            activeCount),
+            play.Effect.Envelope, activeCount),
         _ => new PreviewedCommand(
-            command.IssuedAt, command.GetType().Name, null, null, null, null, null, null, activeCount),
+            command.IssuedAt, command.GetType().Name, null, null, null, null, null, null, null, activeCount),
     };
 
     private void LogCommand(ForceCommand command, int activeCount)

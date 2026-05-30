@@ -54,6 +54,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _outputName = string.Empty;
     private string _outputStatus = string.Empty;
     private bool _forcePreviewMode;
+    private bool _showPreviewEnvelopeDetail;
     private bool _isEmergencyStopActive;
 
     // Held as concrete RelayCommand (not ICommand) so the Activated/Cleared handlers can call
@@ -78,7 +79,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _device = device;
         _settingsStore = settingsStore;
         _emergencyStop = emergencyStop;
-        _forcePreviewMode = settingsStore.Load().ForcePreviewMode;
+        // Single Load() shared across the persisted-toggle fields — both ForcePreviewMode and
+        // ShowPreviewEnvelopeDetail (#76) hydrate from it.
+        var initialSettings = settingsStore.Load();
+        _forcePreviewMode = initialSettings.ForcePreviewMode;
+        _showPreviewEnvelopeDetail = initialSettings.ShowPreviewEnvelopeDetail;
         _isEmergencyStopActive = emergencyStop.IsActive;
 
         AutoDetectCommand = new RelayCommand(_ => AutoDetect());
@@ -163,6 +168,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 _settingsStore.Update(s => s.ForcePreviewMode = value);
                 AppLog.Write($"Force-preview-mode set to {value}; applies on next launch.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// User toggle to render per-command ADSR envelope detail inline in the Preview Output list (#76).
+    /// Persisted to <see cref="AppSettings.ShowPreviewEnvelopeDetail"/> via <see cref="AppSettingsStore.Update"/>
+    /// so a sibling <c>ForcePreviewMode</c> / <c>GameLogPath</c> is preserved. Applied immediately on toggle —
+    /// the converter that formats each row re-runs on the binding update, no restart required.
+    /// </summary>
+    public bool ShowPreviewEnvelopeDetail
+    {
+        get => _showPreviewEnvelopeDetail;
+        set
+        {
+            if (SetField(ref _showPreviewEnvelopeDetail, value))
+            {
+                _settingsStore.Update(s => s.ShowPreviewEnvelopeDetail = value);
+                AppLog.Write($"Show-preview-envelope-detail set to {value}.");
             }
         }
     }

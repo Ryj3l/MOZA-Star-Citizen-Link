@@ -171,4 +171,35 @@ public sealed class AppSettingsStoreTests : IDisposable
         Assert.Equal("Alt+F9", settings.EmergencyStopHotkey);
         Assert.True(settings.ForcePreviewMode);
     }
+
+    [Fact]
+    public void SaveThenLoadRoundTripsShowPreviewEnvelopeDetail()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings { ShowPreviewEnvelopeDetail = true });
+
+        var settings = store.Load();
+
+        Assert.True(settings.ShowPreviewEnvelopeDetail);
+    }
+
+    [Fact]
+    public void UpdateMutatingShowPreviewEnvelopeDetailPreservesSiblings()
+    {
+        var store = new AppSettingsStore(_settingsPath);
+        store.Save(new AppSettings
+        {
+            GameLogPath = @"C:\Games\StarCitizen\LIVE\Game.log",
+            ForcePreviewMode = true,
+            EmergencyStopHotkey = "Alt+F9",
+        });
+
+        store.Update(s => s.ShowPreviewEnvelopeDetail = true);
+
+        var settings = store.Load();
+        Assert.Equal(@"C:\Games\StarCitizen\LIVE\Game.log", settings.GameLogPath);
+        Assert.True(settings.ForcePreviewMode);
+        Assert.Equal("Alt+F9", settings.EmergencyStopHotkey);
+        Assert.True(settings.ShowPreviewEnvelopeDetail);
+    }
 }
