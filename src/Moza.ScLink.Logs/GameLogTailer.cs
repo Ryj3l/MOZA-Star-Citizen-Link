@@ -32,7 +32,7 @@ public sealed class GameLogTailer : IDisposable
         _worker = Task.Run(() => ReadLoopAsync(startAtEnd, _cts.Token));
     }
 
-    public async Task StopAsync()
+    public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         if (_cts is null)
         {
@@ -45,10 +45,15 @@ public sealed class GameLogTailer : IDisposable
         {
             try
             {
-                await _worker;
+                // Bound the worker drain by the caller's deadline. If the caller's CT fires before
+                // the worker observes our _cts (e.g., FileStream open stalled by AV scan), surface
+                // OCE so the caller (LogSensor) can log + dispose without throwing "stop failed"
+                // up to the host. (#73)
+                await _worker.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
+                // Worker exited via our _cts cancellation; expected.
             }
         }
 
