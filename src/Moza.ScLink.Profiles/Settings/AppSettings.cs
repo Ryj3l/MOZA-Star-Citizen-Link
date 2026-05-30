@@ -18,6 +18,15 @@ public sealed class AppSettings
     public bool ForcePreviewMode { get; set; }
 
     /// <summary>
+    /// When <c>true</c>, the Preview Output diagnostic list renders the per-command ADSR envelope
+    /// detail inline (Attack/Hold/Decay/Release/AttackLevel/SustainLevel) alongside the existing
+    /// effect id + intensity + active-count fields (#76). Persisted across launches; applied
+    /// immediately on toggle (not launch-deferred like <see cref="ForcePreviewMode"/>).
+    /// </summary>
+    [JsonPropertyName("showPreviewEnvelopeDetail")]
+    public bool ShowPreviewEnvelopeDetail { get; set; }
+
+    /// <summary>
     /// The global hotkey that activates emergency stop, in human-readable form (default
     /// <c>"Ctrl+Alt+F12"</c>): modifiers (Ctrl/Control, Alt, Shift, Win/Windows) and exactly one key
     /// (F1–F24, a letter, or a digit) joined by <c>+</c>. Parsed by <c>HotkeyCombination.TryParse</c>

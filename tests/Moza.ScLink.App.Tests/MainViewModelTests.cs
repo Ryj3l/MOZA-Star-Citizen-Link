@@ -186,6 +186,36 @@ public sealed class MainViewModelTests : IDisposable
     }
 
     [Fact]
+    public void ShowPreviewEnvelopeDetailInitializesFromStore()
+    {
+        var store = NewStore();
+        store.Save(new AppSettings { ShowPreviewEnvelopeDetail = true });
+
+        using var vm = Create(new EventBus(), store: store);
+
+        Assert.True(vm.ShowPreviewEnvelopeDetail);
+    }
+
+    [Fact]
+    public void SettingShowPreviewEnvelopeDetailPersistsAndPreservesSiblings()
+    {
+        var store = NewStore();
+        store.Save(new AppSettings
+        {
+            GameLogPath = @"C:\sc\Game.log",
+            ForcePreviewMode = true,
+        });
+        using var vm = Create(new EventBus(), store: store);
+
+        vm.ShowPreviewEnvelopeDetail = true;
+
+        var reloaded = NewStore().Load();
+        Assert.True(reloaded.ShowPreviewEnvelopeDetail);
+        Assert.True(reloaded.ForcePreviewMode);
+        Assert.Equal(@"C:\sc\Game.log", reloaded.GameLogPath);
+    }
+
+    [Fact]
     public async Task EmergencyStopActivationFlipsStateAndGatesCommands()
     {
         var estop = new EmergencyStop(NullLogger<EmergencyStop>.Instance);

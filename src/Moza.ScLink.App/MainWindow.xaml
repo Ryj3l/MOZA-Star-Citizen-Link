@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:ff="clr-namespace:Moza.ScLink.App.ForceFeedback"
         mc:Ignorable="d"
         Title="MOZA Star Citizen Link"
         Height="560"
@@ -12,6 +13,7 @@
         Background="#F4F6F8">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <ff:PreviewRowFormatConverter x:Key="PreviewRowFormat" />
     </Window.Resources>
     <Grid Margin="18">
         <Grid.RowDefinitions>
@@ -155,7 +157,14 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                        <TextBlock Text="Preview Output (last 50)" FontWeight="SemiBold" Foreground="#2A3440" Margin="14,12,14,8" />
+                        <DockPanel Margin="14,12,14,8">
+                            <CheckBox DockPanel.Dock="Right"
+                                      Content="Show envelope detail"
+                                      IsChecked="{Binding ShowPreviewEnvelopeDetail}"
+                                      VerticalAlignment="Center" Foreground="#5B6673" />
+                            <TextBlock Text="Preview Output (last 50)" FontWeight="SemiBold" Foreground="#2A3440"
+                                       VerticalAlignment="Center" />
+                        </DockPanel>
                         <ListBox Grid.Row="1"
                                  ItemsSource="{Binding PreviewCommands}"
                                  BorderThickness="0"
@@ -167,14 +176,19 @@
                                 <DataTemplate>
                                     <TextBlock TextWrapping="Wrap">
                                         <TextBlock.Text>
-                                            <MultiBinding StringFormat="{}{0:HH:mm:ss.fff}  {1}  {2}  i={3:0.##}  active={4}">
+                                            <MultiBinding Converter="{StaticResource PreviewRowFormat}">
                                                 <!-- LocalDateTime: WallClock (= command.IssuedAt) is UTC (EffectResolver),
                                                      so display in local time to match the Event Feed's local timestamps. -->
                                                 <Binding Path="WallClock.LocalDateTime" />
                                                 <Binding Path="CommandType" />
                                                 <Binding Path="EffectId" />
                                                 <Binding Path="FinalIntensity" />
+                                                <Binding Path="Envelope" />
                                                 <Binding Path="ActiveCount" />
+                                                <!-- Reach up to the window DataContext (MainViewModel) for the toggle bool — the
+                                                     per-item DataContext is a PreviewedCommand, which does not carry the toggle. -->
+                                                <Binding Path="DataContext.ShowPreviewEnvelopeDetail"
+                                                         RelativeSource="{RelativeSource AncestorType=Window}" />
                                             </MultiBinding>
                                         </TextBlock.Text>
                                     </TextBlock>
