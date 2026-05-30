@@ -172,7 +172,10 @@ public sealed class VorticeDirectInputDeviceTests
         ForceEffectType effectType = ForceEffectType.Periodic,
         double frequencyHz = 40.0,
         TimeSpan? duration = null,
-        string? stateKey = null) => new()
+        string? stateKey = null,
+        ForceEnvelope? envelope = null,
+        double directionX = 0.0,
+        double directionY = 0.0) => new()
     {
         EffectId = effectId,
         EffectType = effectType,
@@ -180,6 +183,9 @@ public sealed class VorticeDirectInputDeviceTests
         FrequencyHz = frequencyHz,
         Duration = duration ?? TimeSpan.FromMilliseconds(250),
         StateKey = stateKey,
+        Envelope = envelope,
+        DirectionX = directionX,
+        DirectionY = directionY,
     };
 
     [Fact]
@@ -825,6 +831,255 @@ public sealed class VorticeDirectInputDeviceTests
         parameters.Flags.Should().HaveFlag(EffectFlags.ObjectOffsets);
         parameters.Flags.Should().NotHaveFlag(EffectFlags.ObjectIds);
         parameters.Axes.Should().Equal(JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY);
+    }
+
+    // ── BuildEffectParameters Choice-A envelope mapping (T-28) ────────────────────────────────
+    // The catalog-matrix tests below pin the Choice-A peak-anchored fold blessed in T-28 preamble
+    // Fork 1 against each envelope-carrying phase1.json effect. Each test constructs the effect
+    // literally (no JSON loading — keeps tests hermetic and the catalog values visible inline) and
+    // asserts the exact AttackLevel/AttackTime/FadeLevel/FadeTime + main magnitude + Duration.
+    // finalIntensity is the catalog baseIntensity throughout to mirror what the production pipeline
+    // produces under unity gain (mental-model: "raw effect, pre-gain-stack reduction").
+
+    [Fact]
+    public void BuildEffectParametersMapsQuantumSpoolEnvelopeChoiceA()
+    {
+        // phase1.json: quantum-spool-v1 — PeriodicWithEnvelope; freq 34 Hz; duration 8000 ms;
+        // envelope A=250ms / H=7000ms / D=500ms / R=250ms; AttackLevel=0.3; SustainLevel=1.0;
+        // baseIntensity=0.42. Choice A: envelopeIntensity = 0.42 × 0.3 = 0.126 → magnitude 1260.
+        var effect = AnEffect(
+            effectType: ForceEffectType.PeriodicWithEnvelope,
+            frequencyHz: 34.0,
+            duration: TimeSpan.FromSeconds(8),
+            envelope: new ForceEnvelope(
+                Attack: TimeSpan.FromMilliseconds(250),
+                Hold: TimeSpan.FromMilliseconds(7000),
+                Decay: TimeSpan.FromMilliseconds(500),
+                Release: TimeSpan.FromMilliseconds(250),
+                AttackLevel: 0.3,
+                SustainLevel: 1.0));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.42);
+
+        parameters.Envelope.Should().NotBeNull();
+        parameters.Envelope.AttackLevel.Should().Be(0);
+        parameters.Envelope.AttackTime.Should().Be(250_000);   // 250 ms × 1000 µs/ms
+        parameters.Envelope.FadeLevel.Should().Be(0);
+        parameters.Envelope.FadeTime.Should().Be(250_000);     // 250 ms × 1000 µs/ms
+        parameters.Duration.Should().Be(8_000_000);            // 8 s × 1_000_000 µs/s
+        parameters.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(1260);                // ScaleMagnitude(0.42 × 0.3)
+    }
+
+    [Fact]
+    public void BuildEffectParametersMapsQuantumJumpExitEnvelopeChoiceA()
+    {
+        // phase1.json: quantum-jump-exit-v1 — PeriodicWithEnvelope; freq 22 Hz; duration 450 ms;
+        // envelope A=30ms / H=120ms / D=200ms / R=100ms; AttackLevel=1.0; SustainLevel=0.7;
+        // baseIntensity=0.6. Choice A: envelopeIntensity = 0.6 × 1.0 = 0.6 → magnitude 6000.
+        var effect = AnEffect(
+            effectType: ForceEffectType.PeriodicWithEnvelope,
+            frequencyHz: 22.0,
+            duration: TimeSpan.FromMilliseconds(450),
+            envelope: new ForceEnvelope(
+                Attack: TimeSpan.FromMilliseconds(30),
+                Hold: TimeSpan.FromMilliseconds(120),
+                Decay: TimeSpan.FromMilliseconds(200),
+                Release: TimeSpan.FromMilliseconds(100),
+                AttackLevel: 1.0,
+                SustainLevel: 0.7));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.6);
+
+        parameters.Envelope.AttackLevel.Should().Be(0);
+        parameters.Envelope.AttackTime.Should().Be(30_000);    // 30 ms × 1000 µs/ms
+        parameters.Envelope.FadeLevel.Should().Be(0);
+        parameters.Envelope.FadeTime.Should().Be(100_000);     // 100 ms × 1000 µs/ms
+        parameters.Duration.Should().Be(450_000);              // 450 ms × 1000 µs/ms
+        parameters.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(6000);                // ScaleMagnitude(0.6 × 1.0)
+    }
+
+    [Fact]
+    public void BuildEffectParametersMapsAtmosphereEntryEnvelopeChoiceA()
+    {
+        // phase1.json: atmosphere-entry-v1 — PeriodicWithEnvelope; freq 18 Hz; duration 0 (sustained);
+        // envelope A=1500ms / H=0 / D=0 / R=800ms; AttackLevel=0.5; SustainLevel=1.0;
+        // baseIntensity=0.22. Choice A: envelopeIntensity = 0.22 × 0.5 = 0.11 → magnitude 1100.
+        // Duration=0 routes through DurationToMicroseconds' sustained branch → InfiniteDuration (= -1).
+        var effect = AnEffect(
+            effectType: ForceEffectType.PeriodicWithEnvelope,
+            frequencyHz: 18.0,
+            duration: TimeSpan.Zero,
+            envelope: new ForceEnvelope(
+                Attack: TimeSpan.FromMilliseconds(1500),
+                Hold: TimeSpan.Zero,
+                Decay: TimeSpan.Zero,
+                Release: TimeSpan.FromMilliseconds(800),
+                AttackLevel: 0.5,
+                SustainLevel: 1.0));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.22);
+
+        parameters.Envelope.AttackLevel.Should().Be(0);
+        parameters.Envelope.AttackTime.Should().Be(1_500_000); // 1500 ms × 1000 µs/ms
+        parameters.Envelope.FadeLevel.Should().Be(0);
+        parameters.Envelope.FadeTime.Should().Be(800_000);     // 800 ms × 1000 µs/ms
+        parameters.Duration.Should().Be(-1);                   // InfiniteDuration sentinel
+        parameters.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(1100);                // ScaleMagnitude(0.22 × 0.5)
+    }
+
+    [Fact]
+    public void BuildEffectParametersMapsLandingContactEnvelopeChoiceA()
+    {
+        // phase1.json: landing-contact-v1 — ConstantForce; freq 0; duration 220 ms;
+        // envelope A=20ms / H=80ms / D=100ms / R=20ms; AttackLevel=1.0; SustainLevel=0.6;
+        // baseIntensity=0.55. Choice A: envelopeIntensity = 0.55 × 1.0 = 0.55 → magnitude 5500.
+        // typeSpecific is ConstantForce (not PeriodicForce) — this exercises the envelope path on
+        // the non-periodic branch.
+        var effect = AnEffect(
+            effectType: ForceEffectType.ConstantForce,
+            frequencyHz: 0.0,
+            duration: TimeSpan.FromMilliseconds(220),
+            envelope: new ForceEnvelope(
+                Attack: TimeSpan.FromMilliseconds(20),
+                Hold: TimeSpan.FromMilliseconds(80),
+                Decay: TimeSpan.FromMilliseconds(100),
+                Release: TimeSpan.FromMilliseconds(20),
+                AttackLevel: 1.0,
+                SustainLevel: 0.6),
+            directionY: -1.0);
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.55);
+
+        parameters.Envelope.AttackLevel.Should().Be(0);
+        parameters.Envelope.AttackTime.Should().Be(20_000);    // 20 ms × 1000 µs/ms
+        parameters.Envelope.FadeLevel.Should().Be(0);
+        parameters.Envelope.FadeTime.Should().Be(20_000);      // 20 ms × 1000 µs/ms
+        parameters.Duration.Should().Be(220_000);              // 220 ms × 1000 µs/ms
+        parameters.Parameters.Should().BeOfType<ConstantForce>()
+            .Which.Magnitude.Should().Be(5500);                // ScaleMagnitude(0.55 × 1.0)
+    }
+
+    [Fact]
+    public void BuildEffectParametersMapsWeaponFireGenericEnvelopeChoiceA()
+    {
+        // phase1.json: weapon-fire-generic-v1 — Periodic (NOT PeriodicWithEnvelope); freq 60 Hz;
+        // duration 90 ms; envelope A=5ms / H=40ms / D=40ms / R=5ms; AttackLevel=1.0; SustainLevel=0.7;
+        // baseIntensity=0.4. Choice A: envelopeIntensity = 0.4 × 1.0 = 0.4 → magnitude 4000.
+        // This effect's EffectType is Periodic — exercises the envelope path on the plain-Periodic
+        // switch arm (not the new PeriodicWithEnvelope arm), confirming envelope construction is
+        // gated by effect.Envelope presence, not by EffectType.
+        var effect = AnEffect(
+            effectType: ForceEffectType.Periodic,
+            frequencyHz: 60.0,
+            duration: TimeSpan.FromMilliseconds(90),
+            envelope: new ForceEnvelope(
+                Attack: TimeSpan.FromMilliseconds(5),
+                Hold: TimeSpan.FromMilliseconds(40),
+                Decay: TimeSpan.FromMilliseconds(40),
+                Release: TimeSpan.FromMilliseconds(5),
+                AttackLevel: 1.0,
+                SustainLevel: 0.7));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.4);
+
+        parameters.Envelope.AttackLevel.Should().Be(0);
+        parameters.Envelope.AttackTime.Should().Be(5_000);     // 5 ms × 1000 µs/ms
+        parameters.Envelope.FadeLevel.Should().Be(0);
+        parameters.Envelope.FadeTime.Should().Be(5_000);       // 5 ms × 1000 µs/ms
+        parameters.Duration.Should().Be(90_000);               // 90 ms × 1000 µs/ms
+        parameters.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(4000);                // ScaleMagnitude(0.4 × 1.0)
+    }
+
+    [Fact]
+    public void BuildEffectParametersMapsVehicleDestructionEnvelopeChoiceA()
+    {
+        // phase1.json: vehicle-destruction-v1 — PeriodicWithEnvelope; freq 14 Hz; duration 1400 ms;
+        // envelope A=50ms / H=400ms / D=800ms / R=150ms; AttackLevel=1.0; SustainLevel=0.7;
+        // baseIntensity=0.8. Choice A: envelopeIntensity = 0.8 × 1.0 = 0.8 → magnitude 8000.
+        var effect = AnEffect(
+            effectType: ForceEffectType.PeriodicWithEnvelope,
+            frequencyHz: 14.0,
+            duration: TimeSpan.FromMilliseconds(1400),
+            envelope: new ForceEnvelope(
+                Attack: TimeSpan.FromMilliseconds(50),
+                Hold: TimeSpan.FromMilliseconds(400),
+                Decay: TimeSpan.FromMilliseconds(800),
+                Release: TimeSpan.FromMilliseconds(150),
+                AttackLevel: 1.0,
+                SustainLevel: 0.7));
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.8);
+
+        parameters.Envelope.AttackLevel.Should().Be(0);
+        parameters.Envelope.AttackTime.Should().Be(50_000);    // 50 ms × 1000 µs/ms
+        parameters.Envelope.FadeLevel.Should().Be(0);
+        parameters.Envelope.FadeTime.Should().Be(150_000);     // 150 ms × 1000 µs/ms
+        parameters.Duration.Should().Be(1_400_000);            // 1400 ms × 1000 µs/ms
+        parameters.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(8000);                // ScaleMagnitude(0.8 × 1.0)
+    }
+
+    [Fact]
+    public void BuildEffectParametersOmitsEnvelopeWhenNull()
+    {
+        // Baseline: when effect.Envelope is null, EffectParameters.Envelope round-trips as the null!
+        // marker that DirectInput interprets as lpEnvelope=NULL ("no envelope shaping"). magnitude
+        // uses finalIntensity directly (no AttackLevel scaling), so 0.5 → 5000.
+        var effect = AnEffect(effectType: ForceEffectType.Periodic, envelope: null);
+
+        var parameters = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        parameters.Envelope.Should().BeNull();
+        parameters.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(5000);                // ScaleMagnitude(0.5) — no envelope scaling
+    }
+
+    [Fact]
+    public void BuildEffectParametersScalesEnvelopeIntensityByFinalIntensity()
+    {
+        // The envelopeIntensity multiplication is linear in finalIntensity: doubling finalIntensity
+        // doubles the resulting magnitude. The envelope shape (AttackTime / FadeTime / levels) does
+        // NOT depend on finalIntensity — only the body-at-main magnitude scales.
+        var envelope = new ForceEnvelope(
+            Attack: TimeSpan.FromMilliseconds(100),
+            Hold: TimeSpan.Zero,
+            Decay: TimeSpan.Zero,
+            Release: TimeSpan.FromMilliseconds(100),
+            AttackLevel: 0.5,
+            SustainLevel: 0.5);
+        var effect = AnEffect(effectType: ForceEffectType.PeriodicWithEnvelope, envelope: envelope);
+
+        var atFull = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 1.0);
+        var atHalf = VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        // Choice A: envelopeIntensity = finalIntensity × env.AttackLevel
+        atFull.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(5000);                // 1.0 × 0.5 → 0.5 → 5000
+        atHalf.Parameters.Should().BeOfType<PeriodicForce>()
+            .Which.Magnitude.Should().Be(2500);                // 0.5 × 0.5 → 0.25 → 2500
+
+        // Envelope shape identical across the two calls — only magnitude scales.
+        atFull.Envelope.AttackTime.Should().Be(100_000);
+        atHalf.Envelope.AttackTime.Should().Be(100_000);
+        atFull.Envelope.FadeTime.Should().Be(100_000);
+        atHalf.Envelope.FadeTime.Should().Be(100_000);
+    }
+
+    [Fact]
+    public void BuildEffectParametersStillRejectsComposite()
+    {
+        // T-28 narrowed the EffectType-rejection throw to Composite-only (PeriodicWithEnvelope is now
+        // a supported switch arm). Composite remains out of scope per T-07.md non-goals (Phase 2+).
+        var effect = AnEffect(effectType: ForceEffectType.Composite);
+
+        var act = () => VorticeDirectInputDevice.BuildEffectParameters(effect, finalIntensity: 0.5);
+
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("*Composite is out of scope per T-07.md non-goals (Phase 2+)*");
     }
 
     // ── HandleStopAllAsync defensive-narrowing regression (Issue #27 Pass 1) ───────────────────

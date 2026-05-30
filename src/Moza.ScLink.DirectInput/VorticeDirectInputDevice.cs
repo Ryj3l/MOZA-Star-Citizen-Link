@@ -799,36 +799,43 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
     /// <summary>
     /// Translates a <see cref="ForceEffect"/> and its gain-resolved final intensity into a Vortice
-    /// <see cref="EffectParameters"/>. Pure function — no device interaction. Exercised by M7/M8 tests
-    /// through <c>HandlePlayAsync</c>; not yet called by production code (<see cref="ExecuteAsync"/> is an
-    /// M8 stub).
+    /// <see cref="EffectParameters"/>. Pure function — no device interaction. Total function over all
+    /// valid catalog inputs: envelope-carrying effects map via the Choice-A peak-anchored fold blessed
+    /// in T-28 preamble Fork 1 (see <see cref="BuildEnvelope"/> and the T-28 spec at
+    /// <c>docs/tasks/T-28.md</c>).
     /// </summary>
     /// <param name="effect">The catalog effect descriptor to render.</param>
     /// <param name="finalIntensity">Gain-stack-resolved intensity in [0.0, 1.0].</param>
     /// <exception cref="ArgumentNullException"><paramref name="effect"/> is <see langword="null"/>.</exception>
     /// <exception cref="NotSupportedException">
-    /// The effect carries a populated <see cref="ForceEffect.Envelope"/> (envelope mapping is deferred to
-    /// T-14 — see issue #17), or its <see cref="ForceEffect.EffectType"/> is one M6 does not build
-    /// (<see cref="ForceEffectType.PeriodicWithEnvelope"/> / <see cref="ForceEffectType.Composite"/>).
+    /// The effect's <see cref="ForceEffect.EffectType"/> is <see cref="ForceEffectType.Composite"/>
+    /// (Composite effects are out of scope per T-07.md non-goals; Phase 2+ work).
     /// </exception>
     internal static EffectParameters BuildEffectParameters(ForceEffect effect, double finalIntensity)
     {
         ArgumentNullException.ThrowIfNull(effect);
 
-        if (effect.Envelope is not null)
-        {
-            throw new NotSupportedException(
-                "Force-feedback envelopes are not implemented in T-07. T-14 introduces the " +
-                "ADSR-to-DirectInput envelope mapping once envelope-carrying effects enter the " +
-                "catalog. Tracked in issue #17.");
-        }
-
-        var magnitude = ScaleMagnitude(finalIntensity);
+        // Choice-A peak-anchored fold (T-28): envelope-carrying effects scale main magnitude by the
+        // envelope's AttackLevel — the perceptually-loudest moment — while Attack/Release drive the
+        // DirectInput envelope's AttackTime/FadeTime (see BuildEnvelope). Non-envelope effects pass
+        // finalIntensity through unchanged. Refinement options for inverted-shape effects
+        // (AttackLevel &lt; SustainLevel) are documented in docs/tasks/T-28.md.
+        var envelopeIntensity = effect.Envelope is not null
+            ? finalIntensity * effect.Envelope.AttackLevel
+            : finalIntensity;
+        var magnitude = ScaleMagnitude(envelopeIntensity);
         var (directionX, directionY) = ScaleDirection(effect.DirectionX, effect.DirectionY);
 
         TypeSpecificParameters typeSpecific = effect.EffectType switch
         {
             ForceEffectType.Periodic => new PeriodicForce
+            {
+                Magnitude = magnitude,
+                Offset = 0,
+                Phase = 0,
+                Period = HertzToPeriodMicroseconds(effect.FrequencyHz),
+            },
+            ForceEffectType.PeriodicWithEnvelope => new PeriodicForce
             {
                 Magnitude = magnitude,
                 Offset = 0,
@@ -841,8 +848,8 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
             },
             _ => throw new NotSupportedException(
                 $"Effect type '{effect.EffectType}' is not supported by the DirectInput output device. " +
-                "T-07 supports Periodic and ConstantForce. PeriodicWithEnvelope is deferred to T-14; " +
-                "Composite is out of scope per T-07.md non-goals."),
+                "Supported types: Periodic, PeriodicWithEnvelope, ConstantForce. " +
+                "Composite is out of scope per T-07.md non-goals (Phase 2+)."),
         };
 
         return new EffectParameters
@@ -856,10 +863,12 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
             StartDelay = 0,
             Axes = [JoystickAxisOffsets.DijofsX, JoystickAxisOffsets.DijofsY],
             Directions = [directionX, directionY],
-            // Vortice 3.6.2 annotates Envelope as non-nullable, but DirectInput semantics require a null
-            // envelope to mean "no envelope shaping" — the legacy device expressed this as lpEnvelope=NULL.
-            // null! is the deliberate, correct value here; T-14 replaces it when envelope mapping lands.
-            Envelope = null!,
+            // DirectInput semantics require a null envelope to mean "no envelope shaping" — the legacy
+            // device expressed this as lpEnvelope=NULL. Vortice 3.6.2 annotates Envelope as non-nullable,
+            // so null! is the way to express "no shaping" through the typed surface. For envelope-carrying
+            // effects, BuildEnvelope produces a fresh Vortice Envelope per the Choice-A peak-anchored
+            // fold blessed in T-28 (see BuildEnvelope and docs/tasks/T-28.md).
+            Envelope = effect.Envelope is null ? null! : BuildEnvelope(effect.Envelope),
             Parameters = typeSpecific,
         };
     }
@@ -893,6 +902,28 @@ public sealed class VorticeDirectInputDevice : IForceFeedbackDevice
 
         return (int)Math.Clamp(duration.TotalMilliseconds * 1000.0, 1.0, int.MaxValue);
     }
+
+    /// <summary>
+    /// Choice-A peak-anchored fold (T-28 Fork 1) of <see cref="ForceEnvelope"/> onto the Vortice
+    /// <see cref="Envelope"/> shape. <c>AttackLevel</c> and <c>FadeLevel</c> anchor at zero;
+    /// <c>AttackTime</c> and <c>FadeTime</c> map directly from <see cref="ForceEnvelope.Attack"/> and
+    /// <see cref="ForceEnvelope.Release"/>. Hold + Decay fold into the implicit body-at-main phase;
+    /// <see cref="ForceEnvelope.SustainLevel"/> is metadata-only at the device layer in this mapping
+    /// (catalog data preserved, not rendered over time). Total function over all valid catalog inputs.
+    /// Refinement options for inverted-shape effects (AttackLevel &lt; SustainLevel) are documented in
+    /// <c>docs/tasks/T-28.md</c> "Future-work refinement options".
+    /// </summary>
+    private static Envelope BuildEnvelope(ForceEnvelope env) => new()
+    {
+        AttackLevel = 0,
+        AttackTime = ClampPositiveMicroseconds(env.Attack),
+        FadeLevel = 0,
+        FadeTime = ClampPositiveMicroseconds(env.Release),
+    };
+
+    /// <summary>Clamps a <see cref="TimeSpan"/> to <c>[0, int.MaxValue]</c> microseconds for DirectInput envelope times.</summary>
+    private static int ClampPositiveMicroseconds(TimeSpan span)
+        => (int)Math.Clamp(span.TotalMicroseconds, 0.0, int.MaxValue);
 
     // ── Effect cache key (T-07 M7) ───────────────────────────────────────────────────────────
     // ComputeCacheKey deliberately uses different rounding math than BuildEffectParameters above:
