@@ -8,7 +8,7 @@ namespace Moza.ScLink.Core.Devices;
 /// <param name="SimultaneousEffectCount">Maximum number of effects the device can play simultaneously.</param>
 /// <param name="SupportsConstantForce">Whether the device supports constant-force DirectInput effects.</param>
 /// <param name="SupportsPeriodic">Whether the device supports periodic DirectInput effects.</param>
-/// <param name="SupportsEnvelope">Whether the device supports ADSR envelope parameters.</param>
+/// <param name="SupportsEnvelope">Whether the device renders ADSR envelope shape over time on the underlying output substrate (vs. accepting envelope params without applying timeline shaping).</param>
 /// <param name="MaxGain">Maximum gain value reported by DirectInput (typically 10000).</param>
 /// <param name="MaxIntensityRecommended">Device-specific safety ceiling, e.g. 0.85 for AB6. Used as the final clamp in the gain stack.</param>
 public sealed record DeviceCapabilities(
