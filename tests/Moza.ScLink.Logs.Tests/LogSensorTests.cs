@@ -241,6 +241,73 @@ public sealed class LogSensorTests : IDisposable
         await enumerator.DisposeAsync();
     }
 
+    [Fact]
+    public async Task StopAsyncCompletesPromptlyForRunningTailer()
+    {
+        // #73 baseline: the tailer is actively iterating (open + read + 250ms sleep) over a real file.
+        // Asserts StopAsync drains within a tight budget — production >5s was environmental
+        // (AV scan / slow disk / file lock), the code-mechanics path is clean.
+        var logPath = NewTempPath("log");
+        WriteShared(logPath, "seed-1\nseed-2\n");
+        var sensor = new LogSensor(new EventBus(), EmptyLibrary(), logPath);
+
+        await sensor.StartAsync(CancellationToken.None);
+        await Task.Delay(600);  // straddle ~2 iterations
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await sensor.StopAsync(CancellationToken.None);
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.Should().BeLessThan(500, "stop must complete within the host's 5s budget with headroom");
+        sensor.State.Should().Be(SensorState.Stopped);
+
+        await sensor.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StopAsyncCompletesPromptlyForIdleTailer()
+    {
+        // #73 baseline: the tailer is sitting in the file-not-exists 1000ms wait branch.
+        // Cancellation must observe within the wait, not require its natural completion.
+        var sensor = new LogSensor(new EventBus(), EmptyLibrary(), NewTempPath("log"));  // never created
+        await sensor.StartAsync(CancellationToken.None);
+        await Task.Delay(200);  // partway through the 1000ms wait
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        await sensor.StopAsync(CancellationToken.None);
+        sw.Stop();
+
+        sw.ElapsedMilliseconds.Should().BeLessThan(500);
+        sensor.State.Should().Be(SensorState.Stopped);
+
+        await sensor.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StopAsyncDoesNotThrowWhenCallerBudgetExceeded()
+    {
+        // #73 contract: ISensor.StopAsync MUST NOT throw to signal shutdown timeout. A pre-cancelled
+        // CT simulates the slow-drain path (caller's deadline elapsed before drain) without needing
+        // an environmental repro (AV scan / slow disk). The tailer's worker continues to drain in
+        // the background; LogSensor soft-logs and transitions to Stopped without throwing.
+        var logPath = NewTempPath("log");
+        WriteShared(logPath, "seed\n");
+        var sensor = new LogSensor(new EventBus(), EmptyLibrary(), logPath);
+
+        await sensor.StartAsync(CancellationToken.None);
+        await Task.Delay(100);
+
+        using var preCancelled = new CancellationTokenSource();
+        await preCancelled.CancelAsync();
+
+        var stop = async () => await sensor.StopAsync(preCancelled.Token);
+
+        await stop.Should().NotThrowAsync("the contract is best-effort drain — host owns the outer deadline");
+        sensor.State.Should().Be(SensorState.Stopped);
+
+        await sensor.DisposeAsync();
+    }
+
     public void Dispose()
     {
         foreach (var library in _libraries)

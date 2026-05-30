@@ -402,7 +402,9 @@ public interface ISensor : IAsyncDisposable
     Task StartAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// Stops the sensor. Idempotent. Must complete within 5 seconds or throw TimeoutException.
+    /// Stops the sensor. Idempotent. Drains best-effort within the caller's cancellationToken;
+    /// MUST NOT throw to signal shutdown timeout — the generic host owns the outer deadline.
+    /// Other exceptions from genuinely-faulted resources may still propagate.
     /// </summary>
     Task StopAsync(CancellationToken cancellationToken);
 

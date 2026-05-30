@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Moza.ScLink.Core.Bus;
+using Moza.ScLink.Core.Diagnostics;
 using Moza.ScLink.Core.Models;
 using Moza.ScLink.Core.Sensors;
 using Moza.ScLink.Logs.Parsing;
@@ -134,15 +135,21 @@ public sealed class LogSensor : ISensor
         {
             tailer.LineRead -= OnLineRead;
             tailer.Faulted -= OnFaulted;
-            var stopTask = tailer.StopAsync();
-            var completed = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(5), cancellationToken)).ConfigureAwait(false);
-            if (completed != stopTask)
+            try
             {
-                throw new TimeoutException("LogSensor stop exceeded the 5-second budget.");
+                await tailer.StopAsync(cancellationToken).ConfigureAwait(false);
             }
-
-            await stopTask.ConfigureAwait(false);  // observe worker exceptions
-            tailer.Dispose();
+            catch (OperationCanceledException)
+            {
+                // Caller's deadline fired before the tailer drained. Per the #73 ISensor contract
+                // update: best-effort drain, do not throw "stop failed" up to the host. The tailer's
+                // CTS is signaled; the worker continues to drain in the background.
+                AppLog.Write("LogSensor stop did not drain within the caller's budget; tailer continues to drain in the background.");
+            }
+            finally
+            {
+                tailer.Dispose();
+            }
         }
 
         TransitionTo(SensorState.Stopped);
@@ -189,14 +196,11 @@ public sealed class LogSensor : ISensor
             _disposed = true;
         }
 
-        try
-        {
-            await StopAsync(CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            // Best-effort teardown.
-        }
+        // 5-second budget here matches the original DisposeAsync semantics (was the inner LogSensor
+        // race's hard-coded 5s before #73). StopAsync drains best-effort within the budget without
+        // throwing on timeout, so the catch (TimeoutException) the old code carried is gone.
+        using var disposeCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await StopAsync(disposeCts.Token).ConfigureAwait(false);
 
         foreach (var channel in _subscribers.Values)
         {
