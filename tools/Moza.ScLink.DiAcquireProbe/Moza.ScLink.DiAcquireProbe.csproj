@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Development-only diagnostic tool (issue #83 / T-23 Section E2). Exclusive-acquires a
+    DirectInput device to force Moza.ScLink.App to lose acquisition while a sustained effect
+    plays, so the force-halt-under-contention question can be answered empirically.
+
+    Posture: never ships, has no project references, and is not reachable from any
+    Moza.ScLink.* runtime project. See README.md in this folder.
+
+    Inherits Directory.Build.props / Directory.Packages.props from the repo root
+    (TreatWarningsAsErrors, WarningLevel 5, banned-API analyzers, central package versions).
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vortice.DirectInput" />
+  </ItemGroup>
+
+</Project>
