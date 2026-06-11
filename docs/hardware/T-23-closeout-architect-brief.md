@@ -4,28 +4,40 @@
 > the desk artifact collecting its inputs in decision order. It is **pre-decision input**, not
 > a decision record — outcomes belong in ADRs/DDRs and issue dispositions, not edits here.
 >
-> **Status: DRAFT — input (a) pending the #83 persistence sitting.** All other inputs banked.
-> App under test throughout: build pin `ded58cf`. Living doc:
+> **Status: inputs COMPLETE — §(a) filled 2026-06-10 from the persistence sitting** (living-doc
+> block @ `80a66be`). E2 (M9 re-acquire ≤5 s) was attempted in the same sitting and is
+> **NOT closed** — no displacement occurred, nothing to measure; the probe as built cannot
+> deliver it. App under test throughout: build pin `ded58cf`. Living doc:
 > `docs/hardware/runs/T-23-AB9.md` (`feat/23-hardware-validation`, draft PR #74).
 
 ## Decision inputs, in order
 
-### (a) #83 severity verdict — PLACEHOLDER, pending persistence sitting
+### (a) #83 severity verdict — FILLED 2026-06-10 (persistence sitting; living doc @ `80a66be`)
 
-#83: emergency-stop device-wide StopAll deliberately no-ops under contention
-(`DIERR_NOTEXCLUSIVEACQUIRED`) while the play path re-acquires under the same condition —
-no *designed* force-halt guarantee while SC holds the device (22/22 activations no-op'd,
-2026-06-08). Severity is tiered: **architectural blocker-tier unconditionally**; the
-**empirical tier is gated** on the persistence sitting (probe: `tools/Moza.ScLink.DiAcquireProbe`,
-merged `dc5ba79`).
+Architectural tier (unconditional blocker-tier): unchanged. **Empirical tier — one finding,
+three legs: force persists until an explicit FFB Reset; the incidental driver halt the no-op
+disposition relies on does not exist at any acquisition boundary; SC's exact displacement
+state remains unreproduced, so the end-to-end contended chain is inferred from a stronger
+condition, not observed.**
 
-Outcome matrix (fills this section after the sitting):
+- Persists through foreign exclusive acquisition (GUID-pinned Exclusive|Foreground on the
+  app's exact instance, 21:05:01.895; sustained Exclusive|Background hold, 21:13:34.429).
+  Acquisition alone never halts force.
+- Persists through **owner-process death**: app closed mid-effect, process fully exited, the
+  AB9 rendered the effect **ownerless** until the probe's FFB Reset halted it. The driver
+  performs no cleanup at unacquire or at process exit.
+- Fidelity boundary: the probe's acquires **coexisted** with the app's Exclusive|Background
+  hold (the app's StopAlls ran clean, 3.11–3.79 ms, while the probe held; zero EventId 12 all
+  sitting) — `DIERR_NOTEXCLUSIVEACQUIRED` was never reproduced. Higher fidelity requires SC
+  itself or a probe that *uses* the device (improvement queue: per-GUID ACQUIRED lines ·
+  file-backed log · input-polling mode).
 
-| Observation at probe-acquire instant | Verdict |
-|---|---|
-| Force **halts on acquire** | Latent gap working by accident (driver stops effects on acquisition loss) |
-| Force **persists until probe Reset** | Conditional incidental — halt depends on the contender's behavior |
-| Force **persists through all** | **ACTIVE FAILURE** — e-stop does not halt real force in-game; weights #83 above #82 |
+**Matrix row: persists-until-Reset → conditional incidental**, sharper than the matrix
+anticipated: a contender halts our force only by issuing its own FFB reset; merely taking the
+device does not. Synthesis with 06-08 (22/22 contended no-ops): the no-op disposition's
+rationale is **empirically void as a safety argument** — under SC contention, playing force
+has neither a designed nor an incidental halt. Full record: #83 verdict comment
+(`issuecomment-4677126283`); living-doc sitting block @ `80a66be`.
 
 ### (b) #82 ship-disposition — hotkey suppressed with SC foreground
 
@@ -36,8 +48,9 @@ to account bans** for users; that risk is borne by the user, not us. Primary pro
 **document-and-ship as a serious limitation** under the permissive Phase-1 bar
 (PRP §15, T-07 AC, PRP.md:1192 — "at least one of AB6 or AB9"; #82/#71 cite this as
 "line 1190", same criterion). Decision: documented limitation vs. fix attempt. Interacts
-with (a): an ACTIVE-FAILURE #83 verdict makes the in-game e-stop story two-layered
-(delivery AND efficacy), strengthening document-honestly framing over fix-one-layer.
+with (a): the landed verdict (persists-until-Reset; no designed or incidental halt under
+contention) makes the in-game e-stop story two-layered in substance (delivery AND efficacy),
+strengthening document-honestly framing over fix-one-layer.
 
 ### (c) #71 hot-plug ship/halt
 
@@ -47,13 +60,19 @@ documented deferral*, which affects fix-prioritization framing, not severity). D
 ship Phase-1 under the permissive bar with static-once-at-startup documented, vs. halt for
 the observer wiring.
 
-### (d) Parent synthesis: e-stop reset is incomplete across stateful stages
+### (d) Parent synthesis: e-stop reset is incomplete across stateful stages — now THREE siblings
 
-#83 (device stop path no-ops under contention) and #84 (limiter `_active` set never reset;
-~2–4 e-stop cycles wedge FFB playback, restart-only recovery) are siblings in mechanism:
-**the e-stop bypass halts the device but resets no upstream stage state**. Axes differ —
-#83 is safety, #84 is availability — do not flatten. #84 fix surfaces on the table:
-e-stop reset of limiter state · replace-on-StateKey semantics · #50 sustained-effect expiry.
+#83 (device stop path no-ops under contention), #84 (limiter `_active` set never reset; ~2–4
+e-stop cycles wedge FFB playback, restart-only recovery), and **#88** (post-e-stop muted
+resurrection — filed from the 2026-06-10 sitting) are siblings in mechanism: **the e-stop
+halts the device but resets no stage state — limiter, effect-cache, or device-side.** #88's
+two properties, do not flatten: **silent failure** (post-e-stop cache-hit replay `Start()`
+returns S_OK, renders nothing, app reports success — worse-shaped than #84's noisy rejection)
+and **delayed surprise force** (an unrelated fresh CreateEffect un-mutes the e-stopped effect
+minutes later; observed ×1, gap ~3 m 54 s). Axes: #83 safety · #84 availability · #88 both
+(silent failure = availability; resurrection = safety-adjacent). Fix surfaces overlap across
+all three: e-stop reset semantics · effect-cache invalidation on e-stop /
+re-download-on-replay · replace-on-StateKey · #50 sustained-effect expiry.
 
 ### (e) Non-preemption finding
 
@@ -82,6 +101,13 @@ the MOZA Cockpit state block up front — already operating), and the **product 
 (issue #86: first-run documentation of required Cockpit state + preflight warning where
 detectable). Ask: prioritize #86 (docs-only vs. detection spike; Phase-1 vs. post).
 
+**New R11 items from the 2026-06-10 sitting:** **#88** (muted resurrection — §(d) third
+sibling; fix-priority call) and the **#78 severity upgrade** (the close path issues zero
+shutdown lines and never stops the device; with no driver cleanup at process exit, app close
+mid-effect = indefinite ownerless force until external Reset or power-off; the shutdown audit
+must include the device-stop path, not only host-lifetime/thread-drain; was quality-of-life →
+proposed safety-adjacent).
+
 ### (g) Section G soak sequencing — decide FIRST among rig actions
 
 Soak-current-build vs. fix-then-soak. #84 wedges playback after ~2–4 e-stop cycles; a 4-hour
@@ -102,5 +128,6 @@ competitive conflict. Standing watch: MOZA firmware/Cockpit release cadence, rec
 ## Carried issues NOT inputs to this call
 
 #30 (baseline reset posted; contention-attenuation open/untested) · #81 · #32 (quantum
-slots restart-only stub) · #78 (shutdown-hang). #80 is a UI-disposition sibling handled in
+slots restart-only stub). #78 moved INTO the call's inputs by its 2026-06-10 severity
+upgrade — see the routing block under §(f). #80 is a UI-disposition sibling handled in
 its own lane.
