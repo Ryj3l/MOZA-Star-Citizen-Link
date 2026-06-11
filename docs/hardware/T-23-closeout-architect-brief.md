@@ -58,13 +58,21 @@ e-stop reset of limiter state · replace-on-StateKey semantics · #50 sustained-
 ### (e) Non-preemption finding
 
 The e-stop bypass is **wake-immediate but execution-non-preemptive** (living doc,
-`### Section C (emergency stop)` — the characterization under its Methodology subsection,
-the "Analytical load-path bound" under its Results): the bypass wakes immediately, but
-`StopAllAsync` runs only at the top of the loop iteration — it does not interrupt an
-in-flight command or the drain of an already-readable queue. Theoretical ceiling
-64 × ~1 ms ≈ **64 ms** (> 50 ms budget) → finding; realistic depth 1–2 (dedup-confirmed)
-→ realistic worst **~1–2 ms**, well under budget. Bounded-latency characterization, not a
-defect disposition — input to how strong a halt-guarantee Phase-1 claims in writing.
+`### Section C (emergency stop)` — characterization under its Methodology subsection, :556):
+the bypass wakes immediately, but `StopAllAsync` runs only at the top of the loop iteration —
+it does not interrupt an in-flight command or the drain of an already-readable queue.
+Theoretical ceiling 64 × ~1 ms ≈ **64 ms** (> 50 ms budget) → finding — unchanged.
+
+**Realistic bound, as corrected by the D2 branch ruling** (living doc D2 block, `b104c4b`;
+#84 reconciliation comment `issuecomment-4674301478`): **no upstream dedup** (Branch A,
+confirmed on both effects) — mashing builds admitted entries up to the limiter cap, so
+realistic depth **≤ 4** (cap), realistic worst **~4 ms**; the **well-under-budget conclusion
+survives**. Note for readers: Section C's frozen Results text (:595) retains the superseded
+"realistic depth ≈ 1–2 (dedup-confirmed)" figure by accumulate-style design — the D2 block
+is the current ruling; read the frozen figure as superseded, not contradictory.
+
+Bounded-latency characterization, not a defect disposition — input to how strong a
+halt-guarantee Phase-1 claims in writing.
 
 ### (f) Environment-capture process finding + rig-config preflight product issue
 
